@@ -66,8 +66,8 @@ struct HistoryView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
-        .onChange(of: viewModel.errorMessage) { msg in
-            showingError = msg != nil
+        .onChange(of: viewModel.errorMessage) { _, newValue in
+            showingError = newValue != nil
         }
         .sheet(item: $sharingItem) { url in
             ShareSheet(items: [url])
@@ -134,8 +134,8 @@ struct HistoryView: View {
         .refreshable {
             viewModel.loadSessions()
         }
-        .onChange(of: viewModel.sharingURL) { url in
-            sharingItem = url
+        .onChange(of: viewModel.sharingURL) { _, newValue in
+            sharingItem = newValue
         }
     }
 }
