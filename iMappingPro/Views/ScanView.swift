@@ -54,7 +54,7 @@ struct ScanView: View {
         } message: {
             Text(viewModel.errorMessage ?? "不明なエラーが発生しました。")
         }
-        .onChange(of: viewModel.errorMessage) { _, newValue in
+        .onChange(of: viewModel.errorMessage) { newValue in
             showingError = newValue != nil
         }
         .overlay {

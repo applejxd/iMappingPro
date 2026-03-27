@@ -68,7 +68,10 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// ARKit セッションを開始する
     func startSession() {
         guard Self.isLiDARSupported else {
-            delegate?.sessionManager(self, didFailWithError: ARSessionError.lidarNotSupported)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.delegate?.sessionManager(self, didFailWithError: ARSessionError.lidarNotSupported)
+            }
             return
         }
 

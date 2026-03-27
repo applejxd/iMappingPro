@@ -66,7 +66,7 @@ struct HistoryView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
-        .onChange(of: viewModel.errorMessage) { _, newValue in
+        .onChange(of: viewModel.errorMessage) { newValue in
             showingError = newValue != nil
         }
         .sheet(item: $sharingItem) { url in
@@ -134,7 +134,7 @@ struct HistoryView: View {
         .refreshable {
             viewModel.loadSessions()
         }
-        .onChange(of: viewModel.sharingURL) { _, newValue in
+        .onChange(of: viewModel.sharingURL) { newValue in
             sharingItem = newValue
         }
     }
@@ -169,7 +169,7 @@ struct SessionRowView: View {
 
 // MARK: - URL Identifiable
 
-extension URL: @retroactive Identifiable {
+extension URL: Identifiable {
     public var id: String { absoluteString }
 }
 
