@@ -1,3 +1,4 @@
+#if canImport(SwiftUI)
 import SwiftUI
 
 /// スキャン履歴一覧画面
@@ -188,3 +189,5 @@ struct ShareSheet: UIViewControllerRepresentable {
 #Preview {
     HistoryView()
 }
+
+#endif // canImport(SwiftUI)

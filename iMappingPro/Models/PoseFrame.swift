@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 /// 1フレームの姿勢・カメラパラメータ情報
 struct PoseFrame: Codable, Identifiable {
