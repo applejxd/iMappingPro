@@ -65,7 +65,7 @@
 				D0000005 /* ARCore */,
 				D0000006 /* Storage */,
 			);
-			path = iMappingPro;
+			name = iMappingPro;
 			sourceTree = "<group>";
 		};
 		D0000002 /* Models */ = {
