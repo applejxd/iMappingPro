@@ -1,3 +1,4 @@
+#if canImport(SwiftUI)
 import SwiftUI
 
 /// スキャン確認・詳細画面
@@ -230,3 +231,5 @@ struct FrameThumbnailView: View {
         )
     }
 }
+
+#endif // canImport(SwiftUI)

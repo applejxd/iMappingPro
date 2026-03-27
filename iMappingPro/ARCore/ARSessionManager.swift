@@ -1,3 +1,4 @@
+#if canImport(ARKit)
 import ARKit
 import RealityKit
 
@@ -183,3 +184,5 @@ enum ARSessionError: LocalizedError {
         }
     }
 }
+
+#endif // canImport(ARKit)

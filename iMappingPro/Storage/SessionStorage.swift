@@ -1,5 +1,7 @@
 import Foundation
+#if canImport(simd)
 import simd
+#endif
 
 // MARK: - StorageError
 
@@ -35,8 +37,12 @@ final class SessionStorage {
 
     private let fileManager = FileManager.default
 
+    /// ベースディレクトリ（テスト時にカスタム指定可能）
+    private let _baseDirectory: URL?
+
     /// Documents/iMappingPro/
     private var baseDirectory: URL {
+        if let custom = _baseDirectory { return custom }
         let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         return docs.appendingPathComponent("iMappingPro", isDirectory: true)
     }
@@ -49,6 +55,18 @@ final class SessionStorage {
     /// Documents/iMappingPro/sessions.json
     private var sessionsIndexURL: URL {
         baseDirectory.appendingPathComponent("sessions.json")
+    }
+
+    // MARK: - Init
+
+    /// デフォルトの Documents/iMappingPro/ を使用する
+    init() {
+        self._baseDirectory = nil
+    }
+
+    /// テスト用にベースディレクトリを指定する
+    init(baseDirectory: URL) {
+        self._baseDirectory = baseDirectory
     }
 
     // MARK: - Setup
@@ -66,7 +84,9 @@ final class SessionStorage {
             return []
         }
         let data = try Data(contentsOf: sessionsIndexURL)
-        let container = try JSONDecoder().decode(SessionsContainer.self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let container = try decoder.decode(SessionsContainer.self, from: data)
         return container.sessions
     }
 

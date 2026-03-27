@@ -1,6 +1,12 @@
+#if canImport(ARKit)
 import ARKit
+#endif
+#if canImport(Combine)
 import Combine
+#endif
+#if canImport(simd)
 import simd
+#endif
 
 // MARK: - ScanState
 
@@ -10,6 +16,8 @@ enum ScanState {
     case paused
     case saving
 }
+
+#if canImport(ARKit) && canImport(Combine)
 
 // MARK: - ScanViewModel
 
@@ -267,3 +275,5 @@ extension ScanViewModel: ARSessionManagerDelegate {
         errorMessage = error.localizedDescription
     }
 }
+
+#endif // canImport(ARKit) && canImport(Combine)

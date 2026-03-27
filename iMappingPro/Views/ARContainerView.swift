@@ -1,3 +1,4 @@
+#if canImport(SwiftUI)
 import SwiftUI
 import ARKit
 import RealityKit
@@ -32,3 +33,5 @@ struct ARContainerView: UIViewRepresentable {
 #Preview {
     ARContainerView(arSession: ARSession())
 }
+
+#endif // canImport(SwiftUI)

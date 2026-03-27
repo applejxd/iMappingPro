@@ -1,3 +1,4 @@
+#if canImport(SwiftUI)
 import SwiftUI
 
 /// メインスキャン画面
@@ -238,3 +239,5 @@ struct ScanView: View {
 #Preview {
     ScanView()
 }
+
+#endif // canImport(SwiftUI)

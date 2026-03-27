@@ -1,11 +1,21 @@
+#if canImport(ARKit)
 import ARKit
+#endif
+#if canImport(CoreVideo)
 import CoreVideo
+#endif
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(simd)
 import simd
+#endif
+import Foundation
 
 /// 深度データ（CVPixelBuffer）の処理・変換を担当
 final class DepthProcessor {
 
+    #if canImport(CoreVideo)
     // MARK: - Depth Binary Format
 
     /// Float32 深度マップを独自バイナリ形式に変換する
@@ -64,6 +74,7 @@ final class DepthProcessor {
         let uiImage = UIImage(cgImage: cgImage)
         return uiImage.jpegData(compressionQuality: quality)
     }
+    #endif
 
     // MARK: - Key Frame Selection
 
@@ -111,6 +122,7 @@ final class DepthProcessor {
 
     // MARK: - Private Helpers
 
+    #if canImport(UIKit)
     private static func createGrayscalePNG(pixels: [UInt8], width: Int, height: Int) -> Data? {
         let colorSpace = CGColorSpaceCreateDeviceGray()
         var pixelsCopy = pixels
@@ -128,6 +140,7 @@ final class DepthProcessor {
             return UIImage(cgImage: cgImage).pngData()
         }
     }
+    #endif
 }
 
 // MARK: - simd_quatf helpers

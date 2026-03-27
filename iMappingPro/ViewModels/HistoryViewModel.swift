@@ -1,5 +1,32 @@
 import Foundation
+#if canImport(Combine)
 import Combine
+#endif
+
+// MARK: - SessionStorageProtocol
+
+/// テスト時にモック差し替え可能にするためのプロトコル
+protocol SessionStorageProtocol {
+    func prepareDirectories() throws
+    func loadAllSessions() throws -> [ScanSession]
+    func saveSessionList(_ sessions: [ScanSession]) throws
+    func sessionDirectoryURL(id: UUID) -> URL
+    func framesDirectoryURL(sessionID: UUID) -> URL
+    func createSessionDirectory(id: UUID) throws -> URL
+    func saveMetadata(_ session: ScanSession) throws
+    func savePoses(_ frames: [PoseFrame], sessionID: UUID) throws
+    func loadPoses(sessionID: UUID) throws -> [PoseFrame]
+    func saveColorImage(_ data: Data, index: Int, sessionID: UUID) throws
+    func saveDepthMap(_ data: Data, index: Int, sessionID: UUID) throws
+    func saveConfidenceMap(_ data: Data, index: Int, sessionID: UUID) throws
+    func colorImageURL(index: Int, sessionID: UUID) -> URL
+    func deleteSession(id: UUID) throws
+    func renameSession(id: UUID, newName: String) throws
+}
+
+extension SessionStorage: SessionStorageProtocol {}
+
+#if canImport(Combine)
 
 @MainActor
 final class HistoryViewModel: ObservableObject {
@@ -13,7 +40,13 @@ final class HistoryViewModel: ObservableObject {
 
     // MARK: - Dependencies
 
-    private let storage = SessionStorage()
+    private let storage: SessionStorageProtocol
+
+    // MARK: - Init
+
+    init(storage: SessionStorageProtocol = SessionStorage()) {
+        self.storage = storage
+    }
 
     // MARK: - Load
 
@@ -94,3 +127,5 @@ final class HistoryViewModel: ObservableObject {
         }
     }
 }
+
+#endif // canImport(Combine)
