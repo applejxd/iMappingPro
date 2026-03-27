@@ -113,17 +113,20 @@ final class DepthProcessor {
 
     private static func createGrayscalePNG(pixels: [UInt8], width: Int, height: Int) -> Data? {
         let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let context = CGContext(
-            data: UnsafeMutableRawPointer(mutating: pixels),
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ), let cgImage = context.makeImage() else { return nil }
+        var pixelsCopy = pixels
+        return pixelsCopy.withUnsafeMutableBytes { rawBuffer -> Data? in
+            guard let context = CGContext(
+                data: rawBuffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+            ), let cgImage = context.makeImage() else { return nil }
 
-        return UIImage(cgImage: cgImage).pngData()
+            return UIImage(cgImage: cgImage).pngData()
+        }
     }
 }
 

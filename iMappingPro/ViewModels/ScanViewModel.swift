@@ -117,7 +117,7 @@ final class ScanViewModel: ObservableObject {
 
         Task.detached(priority: .userInitiated) {
             do {
-                try storage.createSessionDirectory(id: sessionID)
+                _ = try storage.createSessionDirectory(id: sessionID)
 
                 // フレームデータを並列書き込み
                 try await withThrowingTaskGroup(of: Void.self) { group in
@@ -218,7 +218,10 @@ extension ScanViewModel: ARSessionManagerDelegate {
         // 深度・カラーデータを収集（バックグラウンドは軽量なのでここで実行）
         let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: frame.capturedImage)
         let depthData = frame.sceneDepth.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0.depthMap) }
-        let confData  = frame.sceneDepth.flatMap { DepthProcessor.confidenceToData(pixelBuffer: $0.confidenceMap) }
+        let confData  = frame.sceneDepth.flatMap { depth -> Data? in
+            guard let confidenceMap = depth.confidenceMap else { return nil }
+            return DepthProcessor.confidenceToData(pixelBuffer: confidenceMap)
+        }
 
         let intrinsics = frame.camera.intrinsics
         let imageSize = CVImageBufferGetEncodedSize(frame.capturedImage)

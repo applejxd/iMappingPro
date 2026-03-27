@@ -59,11 +59,17 @@ open iMappingPro/iMappingPro.xcodeproj
 1. 接続した iPhone Pro をターゲットデバイスとして選択
 2. `⌘R` でビルド・実行
 
+### CI ビルドチェック
+
+プッシュ・プルリクエスト時に GitHub Actions で自動ビルドが実行されます。  
+ビルドが通ることをコミットの条件としています。  
+詳細は [`.github/workflows/build.yml`](.github/workflows/build.yml) を参照してください。
+
 ---
 
 ## テスト手順
 
-### 動作確認 (v0.1 〜 v1.0)
+### 動作確認 (v1.0)
 
 | # | 確認項目 | 期待動作 |
 |---|---|---|
@@ -77,6 +83,8 @@ open iMappingPro/iMappingPro.xcodeproj
 | 8 | リネーム | 長押し → 「リネーム」で名前を変更できる |
 | 9 | 削除 | スワイプ → 「削除」でセッションが消える |
 | 10 | リセット | スキャン中に「リセット」でデータがクリアされる |
+
+> ⚠️ LiDAR はシミュレータで動作しないため、実機テストが必須です。
 
 ### ファイル確認
 
@@ -118,56 +126,11 @@ iMappingPro (App) > Documents > iMappingPro > sessions > <UUID> /
 
 ---
 
-## プロジェクト構造
-
-```
-iMappingPro/
-├── README.md
-├── AGENTS.md                      # 開発ルール・ADR 実行順序
-├── docs/
-│   ├── research/                  # 技術調査ドキュメント
-│   ├── adr/                       # Architecture Decision Records
-│   └── system/                    # システム設計ドキュメント
-└── iMappingPro/
-    ├── iMappingPro.xcodeproj/
-    ├── iMappingProApp.swift
-    ├── ContentView.swift
-    ├── Models/                    # ScanSession, PoseFrame
-    ├── ViewModels/                # ScanViewModel, HistoryViewModel
-    ├── Views/                     # ScanView, HistoryView, SessionDetailView
-    ├── ARCore/                    # ARSessionManager, DepthProcessor
-    ├── Storage/                   # SessionStorage
-    └── Info.plist
-```
-
----
-
 ## ドキュメント
 
 | ドキュメント | 内容 |
 |---|---|
-| [docs/research/arkit-overview.md](docs/research/arkit-overview.md) | ARKit の仕様概要 |
-| [docs/research/lidar-depth-api.md](docs/research/lidar-depth-api.md) | LiDAR 深度 API 詳細 |
-| [docs/research/pose-estimation.md](docs/research/pose-estimation.md) | 姿勢推定の理論と実装 |
-| [docs/research/related-libraries.md](docs/research/related-libraries.md) | 関連ライブラリ比較 |
-| [docs/adr/ADR-001-project-foundation.md](docs/adr/ADR-001-project-foundation.md) | v0.1: プロジェクト基盤 |
-| [docs/adr/ADR-002-capture-pipeline.md](docs/adr/ADR-002-capture-pipeline.md) | v0.2: キャプチャパイプライン |
-| [docs/adr/ADR-003-scan-ui.md](docs/adr/ADR-003-scan-ui.md) | v0.3: スキャン UI |
-| [docs/adr/ADR-004-persistence.md](docs/adr/ADR-004-persistence.md) | v0.4: セッション永続化 |
-| [docs/adr/ADR-005-history-ui.md](docs/adr/ADR-005-history-ui.md) | v1.0: 履歴管理 UI |
-| [docs/system/architecture.md](docs/system/architecture.md) | システムアーキテクチャ |
+| [docs/system/project-structure.md](docs/system/project-structure.md) | プロジェクト構造・開発状況 |
+| [docs/system/architecture.md](docs/system/architecture.md) | システムアーキテクチャ・データフロー |
 | [docs/system/data-format.md](docs/system/data-format.md) | データフォーマット仕様 |
-
----
-
-## 開発状況
-
-| ADR | リリース | ステータス |
-|---|---|---|
-| ADR-001 | v0.1 | ✅ 完了 |
-| ADR-002 | v0.2 | ✅ 完了 |
-| ADR-003 | v0.3 | ✅ 完了 |
-| ADR-004 | v0.4 | ✅ 完了 |
-| ADR-005 | v1.0 | ✅ 完了 |
-
-> 次のステップ: iPhone Pro 実機でのビルド・動作確認
+| [CHANGELOG.md](CHANGELOG.md) | バージョン別変更履歴 |
