@@ -91,6 +91,11 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         isCapturing = true
     }
 
+    /// キャプチャを再開（初期姿勢は維持し、座標系の原点を変えない）
+    func resumeCapture() {
+        isCapturing = true
+    }
+
     /// キャプチャを停止（セッションは維持）
     func stopCapture() {
         isCapturing = false

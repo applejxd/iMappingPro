@@ -60,6 +60,15 @@ final class ScanViewModel: ObservableObject {
 
     // MARK: - Controls
 
+    /// プレビュー表示用に AR セッションを準備する
+    ///
+    /// スキャン中・一時停止中に呼ばれた場合はトラッキングをリセットしないよう何もしない
+    /// （タブ切り替えなどで再度 `onAppear` した際に原点がずれるのを防ぐ）
+    func prepareSession() {
+        guard scanState == .idle else { return }
+        sessionManager.startSession()
+    }
+
     func startScanning() {
         guard scanState == .idle else { return }
         capturedFrames = []
@@ -68,12 +77,14 @@ final class ScanViewModel: ObservableObject {
         frameCount = 0
         elapsedSeconds = 0
         lastCapturedTranslation = .zero
+        savedSession = nil
+        currentSessionID = nil
 
+        depthProcessor.reset()
         sessionManager.startSession()
         sessionManager.startCapture()
         sessionStartTime = Date()
         scanState = .scanning
-        depthProcessor.reset()
 
         startTimer()
     }
@@ -87,12 +98,17 @@ final class ScanViewModel: ObservableObject {
 
     func resumeScanning() {
         guard scanState == .paused else { return }
-        sessionManager.startCapture()
+        // 初期姿勢を維持したまま再開する（原点が移動すると姿勢が不連続になる）
+        sessionManager.resumeCapture()
         scanState = .scanning
         startTimer()
     }
 
     func resetScanning() {
+        guard scanState != .saving else { return }
+        // 先にタイマーを止めてから値をリセットする
+        // （停止前に 0 を代入すると、キャンセル済みタスクの最終書き込みで値が戻る）
+        stopTimer()
         sessionManager.resetSession()
         capturedFrames = []
         pendingFrameData = []
@@ -102,16 +118,20 @@ final class ScanViewModel: ObservableObject {
         lastCapturedTranslation = .zero
         sessionStartTime = nil
         currentSessionID = nil
+        savedSession = nil
         depthProcessor.reset()
-        stopTimer()
         scanState = .idle
     }
 
     func saveSession(name: String) {
+        guard scanState != .saving, !isSaving else { return }
         guard !capturedFrames.isEmpty else {
             errorMessage = "保存するフレームがありません。スキャンを開始してください。"
             return
         }
+        // 保存中にフレームが増えると保存内容と表示がずれるため、キャプチャとタイマーを止める
+        sessionManager.stopCapture()
+        stopTimer()
         isSaving = true
         scanState = .saving
 
@@ -187,6 +207,13 @@ final class ScanViewModel: ObservableObject {
                     self.scanState = .idle
                     self.capturedFrames = []
                     self.pendingFrameData = []
+                    // 次のスキャンに備えて表示値もリセットする
+                    self.frameCount = 0
+                    self.elapsedSeconds = 0
+                    self.totalDistance = 0
+                    self.lastCapturedTranslation = .zero
+                    self.sessionStartTime = nil
+                    self.currentSessionID = nil
                 }
             } catch {
                 await MainActor.run {
@@ -201,12 +228,19 @@ final class ScanViewModel: ObservableObject {
     // MARK: - Timer
 
     private func startTimer() {
+        // 二重起動防止（複数タスクが elapsedSeconds を奪い合うのを防ぐ）
+        stopTimer()
         let startTime = Date()
         let baseElapsed = elapsedSeconds
         timerTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
-                guard let self else { break }
+                do {
+                    try await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+                } catch {
+                    // キャンセル時はここで抜ける（抜けずに書き込むとリセット値が上書きされる）
+                    break
+                }
+                guard !Task.isCancelled, let self else { break }
                 let elapsed = baseElapsed + Date().timeIntervalSince(startTime)
                 self.elapsedSeconds = elapsed
             }
@@ -228,6 +262,8 @@ extension ScanViewModel: ARSessionManagerDelegate {
         didUpdate frame: ARFrame,
         relativePose: simd_float4x4
     ) {
+        // 停止・リセット・保存中に遅延到達したフレームは取り込まない
+        guard scanState == .scanning else { return }
         let translation = SIMD3<Float>(
             relativePose.columns.3.x,
             relativePose.columns.3.y,
