@@ -35,6 +35,14 @@ protocol SessionStorageProtocol {
 
 extension SessionStorage: SessionStorageProtocol {}
 
+// MARK: - ShareItem
+
+/// 共有シート表示用の識別子付き URL ラッパー
+struct ShareItem: Identifiable, Equatable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
 #if canImport(Combine)
 
 @MainActor
@@ -45,7 +53,7 @@ final class HistoryViewModel: ObservableObject {
     @Published var sessions: [ScanSession] = []
     @Published var errorMessage: String?
     @Published var isLoading: Bool = false
-    @Published var sharingURL: URL?
+    @Published var sharingItem: ShareItem?
     @Published var isPreparingArchive: Bool = false
 
     // MARK: - Dependencies
@@ -190,7 +198,7 @@ final class HistoryViewModel: ObservableObject {
                     let url = try await Task.detached(priority: .userInitiated) {
                         try storage.createSessionArchive(id: sessionID)
                     }.value
-                    sharingURL = url
+                    sharingItem = ShareItem(url: url)
                 } catch {
                     errorMessage = error.localizedDescription
                 }
@@ -201,7 +209,7 @@ final class HistoryViewModel: ObservableObject {
 
     private func provideSharingURL(_ url: URL, missingMessage: String) {
         if FileManager.default.fileExists(atPath: url.path) {
-            sharingURL = url
+            sharingItem = ShareItem(url: url)
         } else {
             errorMessage = missingMessage
         }
