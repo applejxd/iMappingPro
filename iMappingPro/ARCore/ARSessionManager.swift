@@ -119,6 +119,18 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         return simd_inverse(initialTransform!) * cameraTransform
     }
 
+    // MARK: - Mesh Snapshot
+
+    /// 現在のシーン再構成メッシュを、スキャン開始地点を原点とする相対座標系で取得する
+    func snapshotMeshChunks() -> [MeshChunk] {
+        guard #available(iOS 13.4, *), let frame = arSession.currentFrame else { return [] }
+        let reference = initialTransform ?? matrix_identity_float4x4
+        return frame.anchors.compactMap { anchor in
+            guard let meshAnchor = anchor as? ARMeshAnchor else { return nil }
+            return MeshExporter.chunk(from: meshAnchor, referenceTransform: reference)
+        }
+    }
+
     // MARK: - ARSessionDelegate
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {

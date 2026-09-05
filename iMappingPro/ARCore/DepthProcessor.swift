@@ -76,6 +76,98 @@ final class DepthProcessor {
     }
     #endif
 
+    // MARK: - Depth Binary Decoding
+
+    /// `_depth.bin` をデコードした結果
+    struct DecodedDepthMap: Equatable {
+        let width: Int
+        let height: Int
+        /// row-major の深度値（メートル）。0 および NaN は無効値
+        let values: [Float]
+    }
+
+    /// `depthToBinary` が出力したバイナリをデコードする
+    static func decodeDepthBinary(_ data: Data) -> DecodedDepthMap? {
+        let headerSize = MemoryLayout<UInt32>.size * 2
+        guard data.count >= headerSize else { return nil }
+
+        let width = Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self) })
+        let height = Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
+        guard width > 0, height > 0 else { return nil }
+
+        let expectedBytes = width * height * MemoryLayout<Float32>.size
+        guard data.count >= headerSize + expectedBytes else { return nil }
+
+        var values = [Float](repeating: 0, count: width * height)
+        data.withUnsafeBytes { raw in
+            for i in 0..<(width * height) {
+                values[i] = raw.loadUnaligned(
+                    fromByteOffset: headerSize + i * MemoryLayout<Float32>.size,
+                    as: Float32.self
+                )
+            }
+        }
+        return DecodedDepthMap(width: width, height: height, values: values)
+    }
+
+    /// 有効な深度値の最小・最大を求める（無効値は無視）
+    static func depthRange(of map: DecodedDepthMap) -> (min: Float, max: Float)? {
+        var minValue = Float.greatestFiniteMagnitude
+        var maxValue = -Float.greatestFiniteMagnitude
+        for value in map.values where value.isFinite && value > 0 {
+            minValue = Swift.min(minValue, value)
+            maxValue = Swift.max(maxValue, value)
+        }
+        guard minValue <= maxValue else { return nil }
+        return (minValue, maxValue)
+    }
+
+    /// 深度マップを可視化用の RGBA ピクセル列へ変換する（近い=赤、遠い=青のカラーマップ）
+    ///
+    /// 無効値（0 / NaN）は透明ピクセルになる。
+    static func depthRGBAPixels(from map: DecodedDepthMap) -> [UInt8] {
+        var pixels = [UInt8](repeating: 0, count: map.width * map.height * 4)
+        guard let range = depthRange(of: map) else { return pixels }
+
+        let span = Swift.max(range.max - range.min, 0.0001)
+        for (i, value) in map.values.enumerated() {
+            guard value.isFinite, value > 0 else { continue }
+            let normalized = Swift.min(Swift.max((value - range.min) / span, 0), 1)
+            let color = turboLikeColor(normalized)
+            let offset = i * 4
+            pixels[offset] = color.0
+            pixels[offset + 1] = color.1
+            pixels[offset + 2] = color.2
+            pixels[offset + 3] = 255
+        }
+        return pixels
+    }
+
+    /// 正規化値 (0...1) を近距離=赤 → 遠距離=青 のカラーへ変換する
+    static func turboLikeColor(_ normalized: Float) -> (UInt8, UInt8, UInt8) {
+        // HSV の色相 0°(赤) → 240°(青) を線形補間した簡易カラーマップ
+        let hue = Swift.min(Swift.max(normalized, 0), 1) * 240.0 / 360.0
+        let sector = hue * 6
+        let index = Int(sector) % 6
+        let fraction = sector - Float(Int(sector))
+        let q = 1 - fraction
+        let t = fraction
+
+        let rgb: (Float, Float, Float)
+        switch index {
+        case 0: rgb = (1, t, 0)
+        case 1: rgb = (q, 1, 0)
+        case 2: rgb = (0, 1, t)
+        case 3: rgb = (0, q, 1)
+        default: rgb = (0, 0, 1)
+        }
+        return (
+            UInt8((rgb.0 * 255).rounded()),
+            UInt8((rgb.1 * 255).rounded()),
+            UInt8((rgb.2 * 255).rounded())
+        )
+    }
+
     // MARK: - Key Frame Selection
 
     private var lastTranslation: SIMD3<Float> = .zero
@@ -123,6 +215,25 @@ final class DepthProcessor {
     // MARK: - Private Helpers
 
     #if canImport(UIKit)
+    /// `_depth.bin` の内容から可視化用の UIImage を生成する
+    static func depthPreviewImage(from data: Data) -> UIImage? {
+        guard let map = decodeDepthBinary(data) else { return nil }
+        var pixels = depthRGBAPixels(from: map)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        return pixels.withUnsafeMutableBytes { rawBuffer -> UIImage? in
+            guard let context = CGContext(
+                data: rawBuffer.baseAddress,
+                width: map.width,
+                height: map.height,
+                bitsPerComponent: 8,
+                bytesPerRow: map.width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ), let cgImage = context.makeImage() else { return nil }
+            return UIImage(cgImage: cgImage)
+        }
+    }
+
     private static func createGrayscalePNG(pixels: [UInt8], width: Int, height: Int) -> Data? {
         let colorSpace = CGColorSpaceCreateDeviceGray()
         var pixelsCopy = pixels

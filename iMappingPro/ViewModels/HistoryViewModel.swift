@@ -20,6 +20,12 @@ protocol SessionStorageProtocol {
     func saveDepthMap(_ data: Data, index: Int, sessionID: UUID) throws
     func saveConfidenceMap(_ data: Data, index: Int, sessionID: UUID) throws
     func colorImageURL(index: Int, sessionID: UUID) -> URL
+    func depthMapURL(index: Int, sessionID: UUID) -> URL
+    func meshURL(sessionID: UUID) -> URL
+    func saveMesh(_ data: Data, sessionID: UUID) throws
+    func hasMesh(sessionID: UUID) -> Bool
+    func loadMesh(sessionID: UUID) throws -> Data
+    func createSessionArchive(id: UUID) throws -> URL
     func deleteSession(id: UUID) throws
     func renameSession(id: UUID, newName: String) throws
 }
@@ -37,6 +43,7 @@ final class HistoryViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isLoading: Bool = false
     @Published var sharingURL: URL?
+    @Published var isPreparingArchive: Bool = false
 
     // MARK: - Dependencies
 
@@ -115,15 +122,67 @@ final class HistoryViewModel: ObservableObject {
         storage.colorImageURL(index: index, sessionID: sessionID)
     }
 
+    func depthMapURL(index: Int, sessionID: UUID) -> URL {
+        storage.depthMapURL(index: index, sessionID: sessionID)
+    }
+
+    // MARK: - Mesh
+
+    func meshURL(for session: ScanSession) -> URL {
+        storage.meshURL(sessionID: session.id)
+    }
+
+    func hasMesh(_ session: ScanSession) -> Bool {
+        storage.hasMesh(sessionID: session.id)
+    }
+
     // MARK: - Share
 
-    func shareSession(_ session: ScanSession) {
-        // poses.json を共有アイテムとして使用（ディレクトリは直接共有できないため）
-        let posesURL = storage.sessionDirectoryURL(id: session.id).appendingPathComponent("poses.json")
-        if FileManager.default.fileExists(atPath: posesURL.path) {
-            sharingURL = posesURL
+    /// ダウンロード（共有）対象の種類
+    enum ShareTarget {
+        /// セッションディレクトリ全体（RGB・深度・姿勢・メッシュ）を ZIP 化
+        case archive
+        /// 統合メッシュ (mesh.obj) のみ
+        case mesh
+        /// 姿勢データ (poses.json) のみ
+        case poses
+    }
+
+    func shareSession(_ session: ScanSession, target: ShareTarget = .archive) {
+        switch target {
+        case .poses:
+            let posesURL = storage.sessionDirectoryURL(id: session.id).appendingPathComponent("poses.json")
+            provideSharingURL(posesURL, missingMessage: "共有するファイルが見つかりません。先にスキャンを保存してください。")
+
+        case .mesh:
+            provideSharingURL(
+                storage.meshURL(sessionID: session.id),
+                missingMessage: "メッシュデータがありません。LiDAR 対応デバイスで再スキャンしてください。"
+            )
+
+        case .archive:
+            isPreparingArchive = true
+            let storage = self.storage
+            let sessionID = session.id
+            Task {
+                do {
+                    let url = try await Task.detached(priority: .userInitiated) {
+                        try storage.createSessionArchive(id: sessionID)
+                    }.value
+                    sharingURL = url
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                isPreparingArchive = false
+            }
+        }
+    }
+
+    private func provideSharingURL(_ url: URL, missingMessage: String) {
+        if FileManager.default.fileExists(atPath: url.path) {
+            sharingURL = url
         } else {
-            errorMessage = "共有するファイルが見つかりません。先にスキャンを保存してください。"
+            errorMessage = missingMessage
         }
     }
 }

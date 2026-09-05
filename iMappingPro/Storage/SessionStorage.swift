@@ -11,6 +11,7 @@ enum StorageError: LocalizedError {
     case decodingFailed(String)
     case fileNotFound(URL)
     case sessionNotFound(UUID)
+    case archiveFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum StorageError: LocalizedError {
             return "ファイルが見つかりません: \(url.lastPathComponent)"
         case .sessionNotFound(let id):
             return "セッションが見つかりません: \(id.uuidString)"
+        case .archiveFailed(let detail):
+            return "ZIP アーカイブの作成に失敗しました: \(detail)"
         }
     }
 }
@@ -188,6 +191,91 @@ final class SessionStorage {
     func colorImageURL(index: Int, sessionID: UUID) -> URL {
         framesDirectoryURL(sessionID: sessionID)
             .appendingPathComponent(String(format: "%06d_color.jpg", index))
+    }
+
+    func depthMapURL(index: Int, sessionID: UUID) -> URL {
+        framesDirectoryURL(sessionID: sessionID)
+            .appendingPathComponent(String(format: "%06d_depth.bin", index))
+    }
+
+    // MARK: - Mesh
+
+    /// Documents/iMappingPro/sessions/<UUID>/mesh.obj
+    func meshURL(sessionID: UUID) -> URL {
+        sessionDirectoryURL(id: sessionID).appendingPathComponent("mesh.obj")
+    }
+
+    func saveMesh(_ data: Data, sessionID: UUID) throws {
+        try data.write(to: meshURL(sessionID: sessionID), options: .atomic)
+    }
+
+    func hasMesh(sessionID: UUID) -> Bool {
+        fileManager.fileExists(atPath: meshURL(sessionID: sessionID).path)
+    }
+
+    func loadMesh(sessionID: UUID) throws -> Data {
+        let url = meshURL(sessionID: sessionID)
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw StorageError.fileNotFound(url)
+        }
+        return try Data(contentsOf: url)
+    }
+
+    // MARK: - Archive
+
+    /// セッションディレクトリ全体を ZIP 化し、一時ディレクトリ上の URL を返す
+    func createSessionArchive(id: UUID) throws -> URL {
+        let sourceDirectory = sessionDirectoryURL(id: id)
+        guard fileManager.fileExists(atPath: sourceDirectory.path) else {
+            throw StorageError.fileNotFound(sourceDirectory)
+        }
+
+        let sessionName = (try? loadAllSessions())?.first { $0.id == id }?.name
+        let baseName = Self.sanitizedFileName(sessionName ?? id.uuidString, fallback: id.uuidString)
+        let destination = fileManager.temporaryDirectory
+            .appendingPathComponent("\(baseName).zip")
+
+        #if canImport(Darwin)
+        var coordinatorError: NSError?
+        var thrownError: Error?
+        NSFileCoordinator().coordinate(
+            readingItemAt: sourceDirectory,
+            options: [.forUploading],
+            error: &coordinatorError
+        ) { temporaryZipURL in
+            do {
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.copyItem(at: temporaryZipURL, to: destination)
+            } catch {
+                thrownError = error
+            }
+        }
+        if let error = coordinatorError {
+            throw StorageError.archiveFailed(error.localizedDescription)
+        }
+        if let error = thrownError {
+            throw StorageError.archiveFailed(error.localizedDescription)
+        }
+        return destination
+        #else
+        throw StorageError.archiveFailed("このプラットフォームでは ZIP 生成に対応していません")
+        #endif
+    }
+
+    /// ファイル名として安全な文字列へ変換する（パス区切りや制御文字を除去）
+    static func sanitizedFileName(_ name: String, fallback: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|")
+            .union(.controlCharacters)
+            .union(.illegalCharacters)
+        let cleaned = name
+            .components(separatedBy: forbidden)
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "..", with: "")
+        let truncated = String(cleaned.prefix(60))
+        return truncated.isEmpty ? fallback : truncated
     }
 
     // MARK: - Delete
