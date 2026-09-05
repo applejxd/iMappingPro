@@ -64,8 +64,8 @@ struct SessionDetailView: View {
         .onAppear {
             loadFrames()
         }
-        .sheet(item: $viewModel.sharingURL) { url in
-            ShareSheet(items: [url])
+        .sheet(item: $viewModel.sharingItem) { item in
+            ShareSheet(items: [item.url])
         }
     }
 

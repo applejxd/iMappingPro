@@ -11,7 +11,7 @@ struct HistoryView: View {
     @State private var showingDeleteAlert: Bool = false
     @State private var deletingSession: ScanSession?
     @State private var showingError: Bool = false
-    @State private var sharingItem: URL?
+    @State private var sharingItem: ShareItem?
 
     var body: some View {
         NavigationStack {
@@ -70,8 +70,8 @@ struct HistoryView: View {
         .onChange(of: viewModel.errorMessage) { newValue in
             showingError = newValue != nil
         }
-        .sheet(item: $sharingItem) { url in
-            ShareSheet(items: [url])
+        .sheet(item: $sharingItem) { item in
+            ShareSheet(items: [item.url])
         }
     }
 
@@ -135,7 +135,7 @@ struct HistoryView: View {
         .refreshable {
             viewModel.loadSessions()
         }
-        .onChange(of: viewModel.sharingURL) { newValue in
+        .onChange(of: viewModel.sharingItem) { newValue in
             sharingItem = newValue
         }
     }
@@ -166,12 +166,6 @@ struct SessionRowView: View {
         }
         .padding(.vertical, 4)
     }
-}
-
-// MARK: - URL Identifiable
-
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
 }
 
 // MARK: - ShareSheet
