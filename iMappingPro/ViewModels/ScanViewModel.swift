@@ -122,6 +122,8 @@ final class ScanViewModel: ObservableObject {
         let frameDataCopy = pendingFrameData
         let sessionName = name.isEmpty ? "スキャン \(Date().formatted())" : name
         let storage = self.storage
+        // メッシュは Metal バッファ参照のため、セッション停止前にこの時点でスナップショットする
+        let meshChunks = sessionManager.snapshotMeshChunks()
 
         Task.detached(priority: .userInitiated) {
             do {
@@ -146,11 +148,20 @@ final class ScanViewModel: ObservableObject {
 
                 try storage.savePoses(frames, sessionID: sessionID)
 
+                // 統合メッシュを OBJ として保存
+                var meshStatistics: MeshStatistics?
+                if !meshChunks.isEmpty, let meshData = MeshExporter.objData(chunks: meshChunks) {
+                    try storage.saveMesh(meshData, sessionID: sessionID)
+                    meshStatistics = MeshExporter.statistics(of: meshChunks)
+                }
+
                 let session = ScanSession(
                     id: sessionID,
                     name: sessionName,
                     frameCount: frames.count,
-                    durationSeconds: duration
+                    durationSeconds: duration,
+                    meshVertexCount: meshStatistics?.vertexCount,
+                    meshFaceCount: meshStatistics?.faceCount
                 )
                 try storage.saveMetadata(session)
 

@@ -21,6 +21,8 @@
 		B001000C0000000C /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001000C0000000C /* ScanView.swift */; };
 		B001000D0000000D /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001000D0000000D /* HistoryView.swift */; };
 		B001000E0000000E /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001000E0000000E /* SessionDetailView.swift */; };
+		B001000F00000010 /* MeshExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001000000010 /* MeshExporter.swift */; };
+		B001001000000011 /* MeshPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001100000011 /* MeshPreviewView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +41,8 @@
 		A001000C0000000C /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
 		A001000D0000000D /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		A001000E0000000E /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
+		A001001000000010 /* MeshExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshExporter.swift; sourceTree = "<group>"; };
+		A001001100000011 /* MeshPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshPreviewView.swift; sourceTree = "<group>"; };
 		A001000F0000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -94,6 +98,7 @@
 				A001000C0000000C /* ScanView.swift */,
 				A001000D0000000D /* HistoryView.swift */,
 				A001000E0000000E /* SessionDetailView.swift */,
+				A001001100000011 /* MeshPreviewView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -103,6 +108,7 @@
 			children = (
 				A001000600000006 /* ARSessionManager.swift */,
 				A001000700000007 /* DepthProcessor.swift */,
+				A001001000000010 /* MeshExporter.swift */,
 			);
 			path = ARCore;
 			sourceTree = "<group>";
@@ -214,6 +220,8 @@
 				B001000C0000000C /* ScanView.swift in Sources */,
 				B001000D0000000D /* HistoryView.swift in Sources */,
 				B001000E0000000E /* SessionDetailView.swift in Sources */,
+				B001000F00000010 /* MeshExporter.swift in Sources */,
+				B001001000000011 /* MeshPreviewView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

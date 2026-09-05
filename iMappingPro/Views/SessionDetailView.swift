@@ -9,6 +9,7 @@ struct SessionDetailView: View {
 
     @State private var frames: [PoseFrame] = []
     @State private var isLoadingFrames: Bool = true
+    @State private var previewMode: FramePreviewMode = .color
 
     private let columns = [GridItem(.adaptive(minimum: 100, maximum: 150), spacing: 4)]
 
@@ -16,6 +17,7 @@ struct SessionDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 metadataSection
+                meshSection
                 trajectorySection
                 framesSection
             }
@@ -25,11 +27,31 @@ struct SessionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    viewModel.shareSession(session)
+                Menu {
+                    Button {
+                        viewModel.shareSession(session, target: .archive)
+                    } label: {
+                        Label("セッション一式 (ZIP)", systemImage: "doc.zipper")
+                    }
+                    Button {
+                        viewModel.shareSession(session, target: .mesh)
+                    } label: {
+                        Label("メッシュ (OBJ)", systemImage: "cube")
+                    }
+                    .disabled(!hasMesh)
+                    Button {
+                        viewModel.shareSession(session, target: .poses)
+                    } label: {
+                        Label("姿勢データ (poses.json)", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                    }
                 } label: {
-                    Image(systemName: "square.and.arrow.up")
+                    if viewModel.isPreparingArchive {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "square.and.arrow.down")
+                    }
                 }
+                .disabled(viewModel.isPreparingArchive)
             }
         }
         .onAppear {
@@ -52,6 +74,7 @@ struct SessionDetailView: View {
                 metadataRow(label: "フレーム数", value: "\(session.frameCount) フレーム", icon: "camera")
                 metadataRow(label: "スキャン時間", value: session.formattedDuration, icon: "clock")
                 metadataRow(label: "推定容量", value: String(format: "%.0f MB", session.estimatedFileSizeMB), icon: "internaldrive")
+                metadataRow(label: "メッシュ", value: session.formattedMeshSummary, icon: "cube")
             }
         }
         .padding()
@@ -69,6 +92,41 @@ struct SessionDetailView: View {
                 .fontWeight(.medium)
                 .gridColumnAlignment(.leading)
         }
+    }
+
+    // MARK: - Mesh Section
+
+    private var meshSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("メッシュ (統合済み 3D)")
+                .font(.headline)
+
+            if hasMesh {
+                MeshPreviewView(meshURL: viewModel.meshURL(for: session))
+                    .frame(height: 260)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+
+                Text("ドラッグで回転、ピンチで拡大縮小できます。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "cube.transparent")
+                        .font(.title)
+                        .foregroundColor(.secondary)
+                    Text("メッシュデータがありません")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 140)
+            }
+        }
+        .padding()
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var hasMesh: Bool {
+        session.hasMesh || viewModel.hasMesh(session)
     }
 
     // MARK: - Trajectory Section
@@ -97,8 +155,18 @@ struct SessionDetailView: View {
 
     private var framesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("フレーム (\(frames.count))")
-                .font(.headline)
+            HStack {
+                Text("フレーム (\(frames.count))")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Picker("プレビュー種別", selection: $previewMode) {
+                ForEach(FramePreviewMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
 
             if isLoadingFrames {
                 ProgressView()
@@ -107,10 +175,10 @@ struct SessionDetailView: View {
                 LazyVGrid(columns: columns, spacing: 4) {
                     ForEach(frames.prefix(50)) { frame in
                         FrameThumbnailView(
-                            imageURL: viewModel.colorImageURL(
-                                index: frame.index,
-                                sessionID: session.id
-                            )
+                            imageURL: previewMode == .color
+                                ? viewModel.colorImageURL(index: frame.index, sessionID: session.id)
+                                : viewModel.depthMapURL(index: frame.index, sessionID: session.id),
+                            mode: previewMode
                         )
                     }
                 }
@@ -186,10 +254,35 @@ struct TrajectoryView: View {
     }
 }
 
+// MARK: - FramePreviewMode
+
+/// フレームサムネイルの表示種別
+enum FramePreviewMode: String, CaseIterable, Identifiable {
+    case color
+    case depth
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .color: return "RGB"
+        case .depth: return "深度"
+        }
+    }
+
+    var placeholderSymbol: String {
+        switch self {
+        case .color: return "photo"
+        case .depth: return "square.stack.3d.up"
+        }
+    }
+}
+
 // MARK: - FrameThumbnailView
 
 struct FrameThumbnailView: View {
     let imageURL: URL
+    var mode: FramePreviewMode = .color
 
     @State private var image: UIImage?
 
@@ -203,7 +296,7 @@ struct FrameThumbnailView: View {
                 Rectangle()
                     .fill(.quaternary)
                     .overlay {
-                        Image(systemName: "photo")
+                        Image(systemName: mode.placeholderSymbol)
                             .foregroundColor(.secondary)
                     }
             }
@@ -211,15 +304,22 @@ struct FrameThumbnailView: View {
         .frame(width: 100, height: 75)
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .onAppear { loadImage() }
+        .task(id: imageURL) { await loadImage() }
     }
 
-    private func loadImage() {
-        Task.detached(priority: .utility) {
-            guard let data = try? Data(contentsOf: imageURL),
-                  let uiImage = UIImage(data: data) else { return }
-            await MainActor.run { image = uiImage }
-        }
+    private func loadImage() async {
+        let url = imageURL
+        let mode = mode
+        let loaded = await Task.detached(priority: .utility) { () -> UIImage? in
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            switch mode {
+            case .color:
+                return UIImage(data: data)
+            case .depth:
+                return DepthProcessor.depthPreviewImage(from: data)
+            }
+        }.value
+        image = loaded
     }
 }
 

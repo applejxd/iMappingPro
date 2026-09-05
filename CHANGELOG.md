@@ -5,6 +5,28 @@ iMappingPro の変更履歴です。
 
 ---
 
+## [1.1.0] - 2026-09-05
+
+### Added
+
+- **統合メッシュのエクスポートとプレビュー** (ADR-009)
+  - `MeshExporter`: `ARMeshAnchor` → 相対座標系メッシュ変換・Wavefront OBJ 書き出し
+  - セッション保存時に `mesh.obj` を出力し、頂点数・面数を `metadata.json` へ記録
+  - `MeshPreviewView`: SceneKit + ModelIO による 3D メッシュプレビュー（回転・拡大縮小対応）
+- **深度画像プレビュー**
+  - `DepthProcessor.decodeDepthBinary` / `depthRGBAPixels` / `depthPreviewImage`:
+    `_depth.bin` のデコードと近距離=赤・遠距離=青のカラーマップ可視化
+  - `SessionDetailView`: RGB / 深度をセグメントコントロールで切り替え
+- **ダウンロード対象の拡張**
+  - セッションディレクトリ全体の ZIP 生成 (`SessionStorage.createSessionArchive`)
+  - 共有メニュー: セッション一式 (ZIP) / メッシュ (OBJ) / 姿勢データ (poses.json)
+
+### Changed
+
+- `ScanSession` に `meshVertexCount` / `meshFaceCount` (任意) を追加
+
+---
+
 ## [1.0.0] - 2026-03-27
 
 ### Added

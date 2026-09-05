@@ -54,7 +54,8 @@ RGBD フレームと同期して記録・管理する。
 | クラス | 役割 |
 |---|---|
 | `ARSessionManager` | ARSession ライフサイクル、相対姿勢計算 |
-| `DepthProcessor` | CVPixelBuffer → Data 変換、キーフレーム選択 |
+| `DepthProcessor` | CVPixelBuffer → Data 変換、`_depth.bin` のデコード・可視化、キーフレーム選択 |
+| `MeshExporter` | ARMeshAnchor → 相対座標系メッシュ変換・Wavefront OBJ 書き出し |
 
 ### Storage
 
@@ -104,6 +105,7 @@ ScanViewModel.sessionManager(_:didUpdate:relativePose:)
           │ DepthProcessor.colorToJPEGData()
           │ DepthProcessor.depthToBinary()
           │ DepthProcessor.confidenceToData()
+          │ MeshExporter.objData()  (保存時に 1 回)
           │
           ▼ append to buffer
           capturedFrames: [PoseFrame]
