@@ -66,9 +66,7 @@
 			children = (
 				A001000100000001 /* iMappingProApp.swift */,
 				A001000200000002 /* ContentView.swift */,
-				A001001200000012 /* CoordinateSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateSystem.swift; sourceTree = "<group>"; };
-		A001001300000013 /* PointCloudExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudExporter.swift; sourceTree = "<group>"; };
-		A001000F0000000F /* Info.plist */,
+				A001000F0000000F /* Info.plist */,
 				D0000002 /* Models */,
 				D0000003 /* ViewModels */,
 				D0000004 /* Views */,
