@@ -10,6 +10,7 @@ struct SessionDetailView: View {
     @State private var frames: [PoseFrame] = []
     @State private var isLoadingFrames: Bool = true
     @State private var previewMode: FramePreviewMode = .color
+    @State private var geometryMode: GeometryPreviewMode = .mesh
 
     private let columns = [GridItem(.adaptive(minimum: 100, maximum: 150), spacing: 4)]
 
@@ -39,6 +40,12 @@ struct SessionDetailView: View {
                         Label("メッシュ (OBJ)", systemImage: "cube")
                     }
                     .disabled(!hasMesh)
+                    Button {
+                        viewModel.shareSession(session, target: .pointCloud)
+                    } label: {
+                        Label("色付き点群 (PLY)", systemImage: "aqi.medium")
+                    }
+                    .disabled(!hasPointCloud)
                     Button {
                         viewModel.shareSession(session, target: .poses)
                     } label: {
@@ -98,15 +105,26 @@ struct SessionDetailView: View {
 
     private var meshSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("メッシュ (統合済み 3D)")
+            Text("3D プレビュー")
                 .font(.headline)
 
-            if hasMesh {
-                MeshPreviewView(meshURL: viewModel.meshURL(for: session))
+            if hasPointCloud && hasMesh {
+                Picker("表示種別", selection: $geometryMode) {
+                    ForEach(GeometryPreviewMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if let source = geometrySource {
+                MeshPreviewView(source: source)
                     .frame(height: 260)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
 
-                Text("ドラッグで回転、ピンチで拡大縮小できます。")
+                Text(source.isPointCloud
+                     ? "RGB フレームと深度から生成した色付き点群です。ドラッグで回転、ピンチで拡大縮小できます。"
+                     : "ドラッグで回転、ピンチで拡大縮小できます。")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } else {
@@ -125,8 +143,25 @@ struct SessionDetailView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
+    /// 表示可能なジオメトリ（選択中のモードが無い場合はもう一方にフォールバック）
+    private var geometrySource: ScenePreviewSource? {
+        switch geometryMode {
+        case .mesh:
+            if hasMesh { return .mesh(viewModel.meshURL(for: session)) }
+            if hasPointCloud { return .pointCloud(viewModel.pointCloudURL(for: session)) }
+        case .pointCloud:
+            if hasPointCloud { return .pointCloud(viewModel.pointCloudURL(for: session)) }
+            if hasMesh { return .mesh(viewModel.meshURL(for: session)) }
+        }
+        return nil
+    }
+
     private var hasMesh: Bool {
         session.hasMesh || viewModel.hasMesh(session)
+    }
+
+    private var hasPointCloud: Bool {
+        viewModel.hasPointCloud(session)
     }
 
     // MARK: - Trajectory Section
@@ -254,6 +289,23 @@ struct TrajectoryView: View {
     }
 }
 
+// MARK: - GeometryPreviewMode
+
+/// 3D プレビューの表示種別
+enum GeometryPreviewMode: String, CaseIterable, Identifiable {
+    case mesh
+    case pointCloud
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .mesh: return "メッシュ"
+        case .pointCloud: return "色付き点群"
+        }
+    }
+}
+
 // MARK: - FramePreviewMode
 
 /// フレームサムネイルの表示種別
@@ -301,7 +353,7 @@ struct FrameThumbnailView: View {
                     }
             }
         }
-        .frame(width: 100, height: 75)
+        .frame(width: 100, height: 133)
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .task(id: imageURL) { await loadImage() }

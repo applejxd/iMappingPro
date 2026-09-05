@@ -131,6 +131,11 @@ public func simd_inverse(_ m: simd_float4x4) -> simd_float4x4 {
     ))
 }
 
+/// 行列とベクトルの乗算
+public func * (lhs: simd_float4x4, rhs: SIMD4<Float>) -> SIMD4<Float> {
+    lhs.columns.0 * rhs.x + lhs.columns.1 * rhs.y + lhs.columns.2 * rhs.z + lhs.columns.3 * rhs.w
+}
+
 /// 行列の乗算
 public func * (lhs: simd_float4x4, rhs: simd_float4x4) -> simd_float4x4 {
     var result = simd_float4x4()

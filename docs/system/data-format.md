@@ -11,6 +11,7 @@ Documents/
             ├── metadata.json      # セッション詳細
             ├── poses.json         # 全フレームの6DOF姿勢
             ├── mesh.obj           # 統合メッシュ (Wavefront OBJ, LiDAR 取得時のみ)
+            ├── points.ply         # 色付き点群 (PLY binary, 深度取得時のみ)
             └── frames/
                 ├── 000000_color.jpg    # RGB フレーム (JPEG)
                 ├── 000000_depth.bin    # 深度マップ (Float32 binary)
@@ -82,7 +83,23 @@ Documents/
 
 - **translation**: `[tx, ty, tz]` — 初期フレームを原点とした相対平行移動 (メートル)
 - **quaternion**: `[qx, qy, qz, qw]` — simd_quatf の vector 形式 (ix, iy, iz, r)
-- **座標系**: ARKit 右手系 (Y軸上向き)
+- **座標系**: 右手系。スキャン開始時の **縦持ち（ポートレート）表示** を基準に定義する
+
+| 軸 | 向き |
+|---|---|
+| +X | 画面右方向 |
+| +Y | 画面上方向（縦持ちでは概ね鉛直上向き） |
+| +Z | 画面手前（カメラの後方。撮影方向は -Z） |
+
+ARKit の `ARCamera.transform` はランドスケープ基準（+X が画面下、+Y が画面右）のため、
+Z 軸まわりに -90° 回転させて上記の基準へ揃えている
+(`CoordinateSystem.portraitAlignment`、ADR-010)。
+
+このためスキャン開始フレームの `quaternion` は単位クォータニオンではなく、
+Z 軸まわり -90° の回転（`[0, 0, -0.7071, 0.7071]`）になる。`translation` は原点 `[0, 0, 0]`。
+
+> **互換性**: v1.1 以前に保存したセッションは、ARKit カメラ座標系（横倒し）が
+> そのまま相対座標系になっている。
 
 ## _color.jpg
 
@@ -90,6 +107,22 @@ Documents/
 - 解像度: デバイスと設定に依存 (通常 1920×1440)
 - カラースペース: sRGB
 - 内容: RGB フレーム (YCbCr → CIImage → CGImage → JPEG 変換)
+- **向き**: ピクセル配列はセンサ基準（横長）のまま。縦持ち撮影に合わせて
+  EXIF Orientation = 6 (`UIImage.Orientation.right` / 時計回り 90°) を付与する
+
+`poses.json` の内部パラメータ (`fx`, `fy`, `cx`, `cy`) は EXIF 適用前の
+センサ基準ピクセル座標に対応する。後処理でピクセルを扱う際は EXIF を適用せずに読み込む。
+
+```python
+from PIL import Image
+
+# EXIF を無視してセンサ基準で読む（内部パラメータと整合する）
+color = Image.open(path)
+
+# 正立させて表示したい場合
+from PIL import ImageOps
+upright = ImageOps.exif_transpose(color)
+```
 
 ## _depth.bin
 
@@ -134,7 +167,7 @@ f 1//1 2//2 3//3
 - 座標系: `poses.json` と同じ「スキャン開始地点を原点とする相対座標系」(ARKit 右手系・Y 軸上向き、単位はメートル)
 - 頂点インデックス: OBJ 仕様どおり 1 始まり
 - 法線: 取得できた場合のみ `vn` として出力され、面は `f v//vn` 形式になる
-- 色情報は含まれない（テクスチャ付けは RGB フレームと `poses.json` を用いて後処理で行う）
+- 色情報は含まれない（色付きで扱いたい場合は `points.ply` を使う）
 
 MeshLab・CloudCompare・Open3D・trimesh などで直接読み込める。
 
@@ -148,14 +181,40 @@ print(mesh.vertices.shape, mesh.faces.shape)
 points = mesh.vertices
 ```
 
+## points.ply
+
+RGB フレームと深度マップから生成した色付き点群 (PLY binary little endian)。
+ARKit のシーン再構成メッシュは色情報を持たないため、その代替として保存する。
+
+```
+ply
+format binary_little_endian 1.0
+comment iMappingPro colored point cloud
+element vertex 198432
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+end_header
+<15 bytes * vertex count>
+```
+
+- 座標系: `poses.json` と同じ相対座標系（メートル）
+- 生成条件: 深度マップを 40 フレーム以内・約 20 万点以内へ間引き、深度 0.1〜5.0 m のみ採用
+- 色: 同一フレームのカラー画像を同一 FOV とみなして正規化座標でサンプル
+- MeshLab・CloudCompare・Open3D (`o3d.io.read_point_cloud`) などでそのまま読める
+
 ## ZIP ダウンロード
 
 履歴詳細画面のダウンロードメニューからは以下を書き出せる。
 
 | メニュー | 内容 |
 |---|---|
-| セッション一式 (ZIP) | セッションディレクトリ全体（`metadata.json` / `poses.json` / `mesh.obj` / `frames/`）|
+| セッション一式 (ZIP) | セッションディレクトリ全体（`metadata.json` / `poses.json` / `mesh.obj` / `points.ply` / `frames/`）|
 | メッシュ (OBJ) | `mesh.obj` のみ |
+| 色付き点群 (PLY) | `points.ply` のみ |
 | 姿勢データ (poses.json) | `poses.json` のみ |
 
 ZIP は `NSFileCoordinator(readingItemAt:options:.forUploading)` で生成され、
