@@ -28,7 +28,7 @@ struct ScanView: View {
             }
         }
         .onAppear {
-            viewModel.sessionManager.startSession()
+            viewModel.prepareSession()
         }
         .alert("スキャンを保存", isPresented: $showingSaveAlert) {
             TextField("スキャン名", text: $sessionName)
