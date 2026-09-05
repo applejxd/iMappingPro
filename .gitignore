@@ -37,3 +37,6 @@ Pods/
 
 # Temp
 /tmp/
+
+# Local scratch
+.tmp/
