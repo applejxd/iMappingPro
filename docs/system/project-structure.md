@@ -30,7 +30,9 @@ iMappingPro/
     ├── ARCore/                    # ARKit セッション管理・深度処理
     │   ├── ARSessionManager.swift # ARSession ライフサイクル
     │   ├── DepthProcessor.swift   # CVPixelBuffer 変換・深度デコード・キーフレーム選択
-    │   └── MeshExporter.swift     # ARMeshAnchor → OBJ 変換
+    │   ├── MeshExporter.swift     # ARMeshAnchor → OBJ 変換
+    │   ├── CoordinateSystem.swift # 縦持ち基準の相対座標系定義
+    │   └── PointCloudExporter.swift # 深度 + RGB → 色付き点群 (PLY)
     ├── Storage/                   # ファイル永続化
     │   └── SessionStorage.swift   # FileManager ラッパー
     └── Info.plist                 # カメラ権限など
@@ -46,6 +48,7 @@ iMappingPro/
 | [ADR-004](../adr/ADR-004-persistence.md) | v0.4 | ✅ 完了 | セッション永続化 |
 | [ADR-005](../adr/ADR-005-history-ui.md) | v1.0 | ✅ 完了 | 履歴管理 UI |
 | [ADR-009](../adr/ADR-009-mesh-depth-preview.md) | v1.1 | ✅ 完了 | メッシュ／深度のプレビューとダウンロード拡張 |
+| [ADR-010](../adr/ADR-010-portrait-orientation-and-point-cloud.md) | v1.2 | ✅ 完了 | 縦持ち基準の座標系整備と色付き点群 |
 
 ## ドキュメント一覧
 

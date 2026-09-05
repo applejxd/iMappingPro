@@ -221,6 +221,21 @@ final class SessionStorage {
         return try Data(contentsOf: url)
     }
 
+    // MARK: - Point Cloud
+
+    /// Documents/iMappingPro/sessions/<UUID>/points.ply
+    func pointCloudURL(sessionID: UUID) -> URL {
+        sessionDirectoryURL(id: sessionID).appendingPathComponent("points.ply")
+    }
+
+    func savePointCloud(_ data: Data, sessionID: UUID) throws {
+        try data.write(to: pointCloudURL(sessionID: sessionID), options: .atomic)
+    }
+
+    func hasPointCloud(sessionID: UUID) -> Bool {
+        fileManager.fileExists(atPath: pointCloudURL(sessionID: sessionID).path)
+    }
+
     // MARK: - Archive
 
     /// セッションディレクトリ全体を ZIP 化し、一時ディレクトリ上の URL を返す

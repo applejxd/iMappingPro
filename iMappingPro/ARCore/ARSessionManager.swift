@@ -111,12 +111,14 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     // MARK: - Pose Calculation
 
     /// 初期フレームを原点とした相対変換行列を計算する
+    ///
+    /// 相対座標系はスキャン開始時のポートレート表示基準（`CoordinateSystem` 参照）で、
+    /// ARKit のランドスケープ基準カメラ座標系から Z 軸まわりに -90° 回転させて揃える。
     func relativeTransform(from cameraTransform: simd_float4x4) -> simd_float4x4 {
         if initialTransform == nil {
             initialTransform = cameraTransform
-            return matrix_identity_float4x4
         }
-        return simd_inverse(initialTransform!) * cameraTransform
+        return CoordinateSystem.relativeTransform(initial: initialTransform!, current: cameraTransform)
     }
 
     // MARK: - Mesh Snapshot
@@ -124,7 +126,9 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// 現在のシーン再構成メッシュを、スキャン開始地点を原点とする相対座標系で取得する
     func snapshotMeshChunks() -> [MeshChunk] {
         guard #available(iOS 13.4, *), let frame = arSession.currentFrame else { return [] }
-        let reference = initialTransform ?? matrix_identity_float4x4
+        let reference = CoordinateSystem.referenceTransform(
+            initial: initialTransform ?? matrix_identity_float4x4
+        )
         return frame.anchors.compactMap { anchor in
             guard let meshAnchor = anchor as? ARMeshAnchor else { return nil }
             return MeshExporter.chunk(from: meshAnchor, referenceTransform: reference)

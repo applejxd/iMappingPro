@@ -23,6 +23,8 @@
 		B001000E0000000E /* SessionDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001000E0000000E /* SessionDetailView.swift */; };
 		B001000F00000010 /* MeshExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001000000010 /* MeshExporter.swift */; };
 		B001001000000011 /* MeshPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001100000011 /* MeshPreviewView.swift */; };
+		B001001100000012 /* CoordinateSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001200000012 /* CoordinateSystem.swift */; };
+		B001001200000013 /* PointCloudExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001300000013 /* PointCloudExporter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +45,8 @@
 		A001000E0000000E /* SessionDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionDetailView.swift; sourceTree = "<group>"; };
 		A001001000000010 /* MeshExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshExporter.swift; sourceTree = "<group>"; };
 		A001001100000011 /* MeshPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshPreviewView.swift; sourceTree = "<group>"; };
+		A001001200000012 /* CoordinateSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateSystem.swift; sourceTree = "<group>"; };
+		A001001300000013 /* PointCloudExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudExporter.swift; sourceTree = "<group>"; };
 		A001000F0000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -62,7 +66,9 @@
 			children = (
 				A001000100000001 /* iMappingProApp.swift */,
 				A001000200000002 /* ContentView.swift */,
-				A001000F0000000F /* Info.plist */,
+				A001001200000012 /* CoordinateSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateSystem.swift; sourceTree = "<group>"; };
+		A001001300000013 /* PointCloudExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudExporter.swift; sourceTree = "<group>"; };
+		A001000F0000000F /* Info.plist */,
 				D0000002 /* Models */,
 				D0000003 /* ViewModels */,
 				D0000004 /* Views */,
@@ -109,6 +115,8 @@
 				A001000600000006 /* ARSessionManager.swift */,
 				A001000700000007 /* DepthProcessor.swift */,
 				A001001000000010 /* MeshExporter.swift */,
+				A001001200000012 /* CoordinateSystem.swift */,
+				A001001300000013 /* PointCloudExporter.swift */,
 			);
 			path = ARCore;
 			sourceTree = "<group>";
@@ -222,6 +230,8 @@
 				B001000E0000000E /* SessionDetailView.swift in Sources */,
 				B001000F00000010 /* MeshExporter.swift in Sources */,
 				B001001000000011 /* MeshPreviewView.swift in Sources */,
+				B001001100000012 /* CoordinateSystem.swift in Sources */,
+				B001001200000013 /* PointCloudExporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

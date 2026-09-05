@@ -25,6 +25,9 @@ protocol SessionStorageProtocol {
     func saveMesh(_ data: Data, sessionID: UUID) throws
     func hasMesh(sessionID: UUID) -> Bool
     func loadMesh(sessionID: UUID) throws -> Data
+    func pointCloudURL(sessionID: UUID) -> URL
+    func savePointCloud(_ data: Data, sessionID: UUID) throws
+    func hasPointCloud(sessionID: UUID) -> Bool
     func createSessionArchive(id: UUID) throws -> URL
     func deleteSession(id: UUID) throws
     func renameSession(id: UUID, newName: String) throws
@@ -136,6 +139,16 @@ final class HistoryViewModel: ObservableObject {
         storage.hasMesh(sessionID: session.id)
     }
 
+    // MARK: - Point Cloud
+
+    func pointCloudURL(for session: ScanSession) -> URL {
+        storage.pointCloudURL(sessionID: session.id)
+    }
+
+    func hasPointCloud(_ session: ScanSession) -> Bool {
+        storage.hasPointCloud(sessionID: session.id)
+    }
+
     // MARK: - Share
 
     /// ダウンロード（共有）対象の種類
@@ -144,6 +157,8 @@ final class HistoryViewModel: ObservableObject {
         case archive
         /// 統合メッシュ (mesh.obj) のみ
         case mesh
+        /// 色付き点群 (points.ply) のみ
+        case pointCloud
         /// 姿勢データ (poses.json) のみ
         case poses
     }
@@ -158,6 +173,12 @@ final class HistoryViewModel: ObservableObject {
             provideSharingURL(
                 storage.meshURL(sessionID: session.id),
                 missingMessage: "メッシュデータがありません。LiDAR 対応デバイスで再スキャンしてください。"
+            )
+
+        case .pointCloud:
+            provideSharingURL(
+                storage.pointCloudURL(sessionID: session.id),
+                missingMessage: "点群データがありません。LiDAR 対応デバイスで再スキャンしてください。"
             )
 
         case .archive:

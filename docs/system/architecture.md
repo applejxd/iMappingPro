@@ -56,6 +56,8 @@ RGBD フレームと同期して記録・管理する。
 | `ARSessionManager` | ARSession ライフサイクル、相対姿勢計算 |
 | `DepthProcessor` | CVPixelBuffer → Data 変換、`_depth.bin` のデコード・可視化、キーフレーム選択 |
 | `MeshExporter` | ARMeshAnchor → 相対座標系メッシュ変換・Wavefront OBJ 書き出し |
+| `CoordinateSystem` | ARKit カメラ座標系（ランドスケープ基準）→ 縦持ち基準相対座標系の変換定義 |
+| `PointCloudExporter` | 深度 + RGB の逆投影による色付き点群生成・PLY 書き出し |
 
 ### Storage
 
@@ -105,7 +107,8 @@ ScanViewModel.sessionManager(_:didUpdate:relativePose:)
           │ DepthProcessor.colorToJPEGData()
           │ DepthProcessor.depthToBinary()
           │ DepthProcessor.confidenceToData()
-          │ MeshExporter.objData()  (保存時に 1 回)
+          │ MeshExporter.objData()          (保存時に 1 回)
+          │ PointCloudExporter.plyData()    (保存時に 1 回)
           │
           ▼ append to buffer
           capturedFrames: [PoseFrame]

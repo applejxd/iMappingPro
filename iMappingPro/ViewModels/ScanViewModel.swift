@@ -148,6 +148,18 @@ final class ScanViewModel: ObservableObject {
 
                 try storage.savePoses(frames, sessionID: sessionID)
 
+                // RGB + 深度から色付き点群を生成して保存（メッシュの色情報の代替）
+                let points = PointCloudExporter.buildPointCloud(
+                    frames: frames,
+                    colorJPEGs: frameDataCopy.map { data -> Data? in
+                        data.colorData.isEmpty ? nil : data.colorData
+                    },
+                    depthBinaries: frameDataCopy.map { $0.depthData }
+                )
+                if !points.isEmpty {
+                    try storage.savePointCloud(PointCloudExporter.plyData(points: points), sessionID: sessionID)
+                }
+
                 // 統合メッシュを OBJ として保存
                 var meshStatistics: MeshStatistics?
                 if !meshChunks.isEmpty, let meshData = MeshExporter.objData(chunks: meshChunks) {

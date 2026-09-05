@@ -67,13 +67,30 @@ final class DepthProcessor {
     }
 
     /// RGB フレームを JPEG Data に変換する（YCbCr → UIImage 経由）
-    static func colorToJPEGData(pixelBuffer: CVPixelBuffer, quality: CGFloat = 0.9) -> Data? {
+    ///
+    /// ARKit の `capturedImage` はセンサ基準（ランドスケープ）で格納されているため、
+    /// ピクセル配列はそのままに EXIF の向き（`.right` = 時計回り 90°）だけを付与する。
+    /// これにより縦持ちで撮影した画像が各種ビューアで正立し、
+    /// `poses.json` の内部パラメータ（センサ基準）との整合も保たれる。
+    static func colorToJPEGData(
+        pixelBuffer: CVPixelBuffer,
+        quality: CGFloat = 0.9,
+        orientation: UIImage.Orientation = captureImageOrientation
+    ) -> Data? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let context = CIContext(options: nil)
         guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
-        let uiImage = UIImage(cgImage: cgImage)
+        let uiImage = UIImage(cgImage: cgImage, scale: 1, orientation: orientation)
         return uiImage.jpegData(compressionQuality: quality)
     }
+    #endif
+
+    #if canImport(UIKit)
+    /// センサ基準の画像を縦持ち（ポートレート）で正立表示するための向き
+    ///
+    /// ARKit のカメラ画像は横長（ランドスケープ）で取得されるため、
+    /// ポートレート UI では時計回りに 90° 回転させる必要がある。
+    static let captureImageOrientation: UIImage.Orientation = .right
     #endif
 
     // MARK: - Depth Binary Decoding
@@ -216,7 +233,13 @@ final class DepthProcessor {
 
     #if canImport(UIKit)
     /// `_depth.bin` の内容から可視化用の UIImage を生成する
-    static func depthPreviewImage(from data: Data) -> UIImage? {
+    ///
+    /// 深度マップもカラー画像と同じセンサ基準（ランドスケープ）のため、
+    /// ポートレート表示に合わせて `.right` の向きを付与する。
+    static func depthPreviewImage(
+        from data: Data,
+        orientation: UIImage.Orientation = captureImageOrientation
+    ) -> UIImage? {
         guard let map = decodeDepthBinary(data) else { return nil }
         var pixels = depthRGBAPixels(from: map)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -230,8 +253,37 @@ final class DepthProcessor {
                 space: colorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ), let cgImage = context.makeImage() else { return nil }
-            return UIImage(cgImage: cgImage)
+            return UIImage(cgImage: cgImage, scale: 1, orientation: orientation)
         }
+    }
+
+    /// JPEG データをセンサ基準の RGBA ピクセル列へデコードする
+    ///
+    /// EXIF の向きは適用せず、常に保存時のピクセル配置（センサ基準）で取り出す。
+    /// 点群生成では深度マップと同じ向きで扱う必要があるため。
+    static func decodeSensorOrientedRGBA(jpeg data: Data) -> ColorImage? {
+        guard let cgImage = UIImage(data: data)?.cgImage else { return nil }
+        let width = cgImage.width
+        let height = cgImage.height
+        guard width > 0, height > 0 else { return nil }
+
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let success = pixels.withUnsafeMutableBytes { rawBuffer -> Bool in
+            guard let context = CGContext(
+                data: rawBuffer.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { return false }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard success else { return nil }
+        return ColorImage(width: width, height: height, rgba: pixels)
     }
 
     private static func createGrayscalePNG(pixels: [UInt8], width: Int, height: Int) -> Data? {

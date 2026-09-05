@@ -14,10 +14,11 @@ RGBD フレームと同期して記録・管理します。
 - 📍 **6DOF 姿勢記録**: 初期位置を原点とした相対姿勢 (平行移動 + クォータニオン)
 - 📷 **RGBD 同期キャプチャ**: RGB (JPEG) + 深度 (Float32 binary) の時刻同期ペア
 - 🧊 **統合メッシュ保存**: ARKit のシーン再構成メッシュを OBJ (`mesh.obj`) として書き出し
+- 🎨 **色付き点群**: RGB + 深度から生成した点群を PLY (`points.ply`) として書き出し
 - 💾 **セッション管理**: 保存・リネーム・削除・共有
 - 📊 **軌跡可視化**: XZ 平面への投影グラフ
 - 🖼️ **RGB / 深度プレビュー**: フレームサムネイルを RGB と深度カラーマップで切替表示
-- 📦 **ダウンロード**: セッション一式 (ZIP) / メッシュ (OBJ) / 姿勢データ (JSON) を共有
+- 📦 **ダウンロード**: セッション一式 (ZIP) / メッシュ (OBJ) / 色付き点群 (PLY) / 姿勢データ (JSON) を共有
 
 ---
 
@@ -101,6 +102,7 @@ iMappingPro (App) > Documents > iMappingPro > sessions > <UUID> /
 ├── metadata.json
 ├── poses.json
 ├── mesh.obj
+├── points.ply
 └── frames/
     ├── 000000_color.jpg
     ├── 000000_depth.bin
@@ -113,6 +115,9 @@ iMappingPro (App) > Documents > iMappingPro > sessions > <UUID> /
 
 詳細は [docs/system/data-format.md](docs/system/data-format.md) を参照。
 
+座標系はスキャン開始時の縦持ち表示基準 (+X 右 / +Y 上 / -Z 撮影方向) です。
+このため開始フレームの `quaternion` は Z 軸まわり -90° の回転になります。
+
 ### poses.json (抜粋)
 
 ```json
@@ -123,7 +128,7 @@ iMappingPro (App) > Documents > iMappingPro > sessions > <UUID> /
     "index": 0,
     "timestamp": 0.0,
     "translation": [0.0, 0.0, 0.0],
-    "quaternion": [0.0, 0.0, 0.0, 1.0],
+    "quaternion": [0.0, 0.0, -0.7071, 0.7071],
     "intrinsics": {"fx": 1440.0, "fy": 1440.0, "cx": 960.0, "cy": 720.0},
     "image_size": {"width": 1920, "height": 1440},
     "depth_size": {"width": 256, "height": 192}
