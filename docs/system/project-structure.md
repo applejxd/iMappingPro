@@ -22,14 +22,15 @@ iMappingPro/
     ├── ViewModels/                # ObservableObject (@MainActor)
     │   ├── ScanViewModel.swift    # スキャン状態管理
     │   └── HistoryViewModel.swift # 履歴 CRUD・共有
-    ├── Views/                     # SwiftUI ビュー
+    ├── Views/                     # SwiftUI ビュー (メッシュプレビュー MeshPreviewView.swift を含む)
     │   ├── ScanView.swift         # AR プレビュー + コントロール
     │   ├── ARContainerView.swift  # ARView ラッパー (UIViewRepresentable)
     │   ├── HistoryView.swift      # セッション一覧
     │   └── SessionDetailView.swift# 詳細 + 軌跡グラフ + サムネイル
     ├── ARCore/                    # ARKit セッション管理・深度処理
     │   ├── ARSessionManager.swift # ARSession ライフサイクル
-    │   └── DepthProcessor.swift   # CVPixelBuffer 変換・キーフレーム選択
+    │   ├── DepthProcessor.swift   # CVPixelBuffer 変換・深度デコード・キーフレーム選択
+    │   └── MeshExporter.swift     # ARMeshAnchor → OBJ 変換
     ├── Storage/                   # ファイル永続化
     │   └── SessionStorage.swift   # FileManager ラッパー
     └── Info.plist                 # カメラ権限など
@@ -44,6 +45,7 @@ iMappingPro/
 | [ADR-003](../adr/ADR-003-scan-ui.md) | v0.3 | ✅ 完了 | メインスキャン UI |
 | [ADR-004](../adr/ADR-004-persistence.md) | v0.4 | ✅ 完了 | セッション永続化 |
 | [ADR-005](../adr/ADR-005-history-ui.md) | v1.0 | ✅ 完了 | 履歴管理 UI |
+| [ADR-009](../adr/ADR-009-mesh-depth-preview.md) | v1.1 | ✅ 完了 | メッシュ／深度のプレビューとダウンロード拡張 |
 
 ## ドキュメント一覧
 

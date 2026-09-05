@@ -10,6 +10,7 @@ Documents/
         └── <UUID>/
             ├── metadata.json      # セッション詳細
             ├── poses.json         # 全フレームの6DOF姿勢
+            ├── mesh.obj           # 統合メッシュ (Wavefront OBJ, LiDAR 取得時のみ)
             └── frames/
                 ├── 000000_color.jpg    # RGB フレーム (JPEG)
                 ├── 000000_depth.bin    # 深度マップ (Float32 binary)
@@ -30,7 +31,9 @@ Documents/
       "createdAt": "2024-01-01T10:00:00Z",
       "frameCount": 150,
       "durationSeconds": 30.5,
-      "directoryName": "550e8400-e29b-41d4-a716-446655440000"
+      "directoryName": "550e8400-e29b-41d4-a716-446655440000",
+      "meshVertexCount": 48213,
+      "meshFaceCount": 91024
     }
   ]
 }
@@ -39,6 +42,9 @@ Documents/
 ## metadata.json
 
 `ScanSession` の Codable シリアライズと同一構造。
+
+`meshVertexCount` / `meshFaceCount` は統合メッシュの規模を表す任意フィールドで、
+メッシュを取得できなかったセッション（LiDAR 非対応など）や v1.0 以前のセッションでは省略される。
 
 ## poses.json
 
@@ -107,6 +113,53 @@ Offset  Size    Type        Description
   - 0: ARConfidenceLevel.low
   - 127: ARConfidenceLevel.medium
   - 255: ARConfidenceLevel.high (※実装では 127 を使用)
+
+## mesh.obj
+
+スキャン中に ARKit が生成したシーン再構成メッシュ (`ARMeshAnchor`) を統合した
+Wavefront OBJ ファイル。
+
+```
+# iMappingPro mesh export
+# vertices: 48213
+# faces: 91024
+o iMappingProMesh
+v 0.1234 -0.0421 1.9832
+...
+vn 0.0000 1.0000 0.0000
+...
+f 1//1 2//2 3//3
+```
+
+- 座標系: `poses.json` と同じ「スキャン開始地点を原点とする相対座標系」(ARKit 右手系・Y 軸上向き、単位はメートル)
+- 頂点インデックス: OBJ 仕様どおり 1 始まり
+- 法線: 取得できた場合のみ `vn` として出力され、面は `f v//vn` 形式になる
+- 色情報は含まれない（テクスチャ付けは RGB フレームと `poses.json` を用いて後処理で行う）
+
+MeshLab・CloudCompare・Open3D・trimesh などで直接読み込める。
+
+```python
+import trimesh
+
+mesh = trimesh.load(session_dir / "mesh.obj")
+print(mesh.vertices.shape, mesh.faces.shape)
+
+# 点群として扱う場合
+points = mesh.vertices
+```
+
+## ZIP ダウンロード
+
+履歴詳細画面のダウンロードメニューからは以下を書き出せる。
+
+| メニュー | 内容 |
+|---|---|
+| セッション一式 (ZIP) | セッションディレクトリ全体（`metadata.json` / `poses.json` / `mesh.obj` / `frames/`）|
+| メッシュ (OBJ) | `mesh.obj` のみ |
+| 姿勢データ (poses.json) | `poses.json` のみ |
+
+ZIP は `NSFileCoordinator(readingItemAt:options:.forUploading)` で生成され、
+一時ディレクトリ上に `<セッション名>.zip` として作られる（ファイル名は安全な文字へサニタイズされる）。
 
 ## Python による読み込みサンプル
 
