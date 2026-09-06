@@ -302,6 +302,11 @@ extension ScanViewModel: ARSessionManagerDelegate {
 
     func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error) {
         errorMessage = error.localizedDescription
+        // セッション側でキャプチャが止められた場合は UI も一時停止状態に合わせる
+        if scanState == .scanning {
+            stopTimer()
+            scanState = .paused
+        }
     }
 }
 

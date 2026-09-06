@@ -343,9 +343,21 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
-        // 中断明けは原点がずれている可能性があるため、次の有効フレームで原点を取り直す
-        if isCapturing {
-            isWaitingForValidStart = nextFrameIndex == 0
+        guard isCapturing else { return }
+
+        if nextFrameIndex == 0 {
+            // まだ1枚も採用していないので、次の有効フレームで原点を取り直せばよい
+            isWaitingForValidStart = true
+            return
+        }
+
+        // 既存フレームとは別のワールド座標系になっている可能性がある。
+        // 黙って繋ぐと軌跡が壊れるため、キャプチャを停止してユーザに委ねる。
+        isCapturing = false
+        logger.warning("セッション中断のためキャプチャを停止しました (frames: \(self.nextFrameIndex, privacy: .public))")
+        let delegate = delegate
+        Task { @MainActor in
+            delegate?.sessionManager(self, didFailWithError: ARSessionError.interruptedDuringCapture)
         }
     }
 }
@@ -378,6 +390,7 @@ extension FrameTrackingQuality {
 enum ARSessionError: LocalizedError {
     case lidarNotSupported
     case sessionFailed(String)
+    case interruptedDuringCapture
 
     var errorDescription: String? {
         switch self {
@@ -385,6 +398,8 @@ enum ARSessionError: LocalizedError {
             return "このデバイスは LiDAR Scanner に対応していません。iPhone 12 Pro 以降が必要です。"
         case .sessionFailed(let message):
             return "ARKit セッションエラー: \(message)"
+        case .interruptedDuringCapture:
+            return "セッションが中断されました。ワールド原点がずれる可能性があるため、キャプチャを停止しました。ここまでの結果を保存するか、リセットして再スキャンしてください。"
         }
     }
 }

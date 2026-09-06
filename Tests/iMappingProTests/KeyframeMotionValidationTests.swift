@@ -129,8 +129,44 @@ final class KeyframeMotionValidationTests: XCTestCase {
         )
     }
 
-    func testEvaluateCapturesNormalKeyframe() {
+    /// 見送ったフレームも不連続判定の基準になる（キーフレーム間隔で判定すると
+    /// 時間差が伸びて飛びを見逃す）
+    func testEvaluateUsesPreviousFrameNotLastKeyframeForDiscontinuity() {
         processor.updateLast(
+            translation: .zero,
+            quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            timestamp: 0
+        )
+
+        // 閾値未満の微小移動を 0.5 秒ぶん見送る
+        for step in 1...30 {
+            let time = TimeInterval(step) * 0.0167
+            XCTAssertEqual(
+                processor.evaluate(
+                    translation: SIMD3<Float>(0.001 * Float(step), 0, 0),
+                    quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+                    timestamp: time,
+                    isFirst: false,
+                    tracking: .normal
+                ),
+                .skip
+            )
+        }
+
+        // 直前フレームから 16.7ms で 0.878m の飛び
+        XCTAssertEqual(
+            processor.evaluate(
+                translation: SIMD3<Float>(0.908, 0, 0),
+                quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+                timestamp: 30 * 0.0167 + 0.0167,
+                isFirst: false,
+                tracking: .normal
+            ),
+            .discontinuity
+        )
+    }
+
+    func testEvaluateCapturesNormalKeyframe() {        processor.updateLast(
             translation: .zero,
             quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
             timestamp: 0

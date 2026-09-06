@@ -274,6 +274,12 @@ final class DepthProcessor {
     private var lastQuaternion: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
     private var lastTimestamp: TimeInterval = 0
 
+    /// 直前に評価した（採用したとは限らない）フレームの姿勢
+    ///
+    /// 姿勢の不連続はキーフレーム間隔ではなくフレーム間隔で判定する必要があるため、
+    /// 採用時のみ更新する `last*` とは別に保持する。
+    private var previousObservation: (translation: SIMD3<Float>, quaternion: simd_quatf, timestamp: TimeInterval)?
+
     let minTranslationDistance: Float = 0.05  // 5cm
     let minRotationAngle: Float = 0.05        // ~3°
     let maxFrameInterval: TimeInterval = 1.0  // 最大1秒
@@ -329,6 +335,10 @@ final class DepthProcessor {
         isFirst: Bool,
         tracking: FrameTrackingQuality
     ) -> CaptureDecision {
+        let observation = previousObservation
+        // 破棄・見送りの場合も次フレームの判定基準になるため必ず更新する
+        previousObservation = (translation, quaternion, timestamp)
+
         // 動きが速すぎる区間はモーションブラーが強く、対応点が取れないため採用しない
         if tracking == .limitedExcessiveMotion { return .skip }
 
@@ -336,17 +346,20 @@ final class DepthProcessor {
             return tracking.isReliable ? .capture : .skip
         }
 
+        // 直前フレームとの姿勢差でワールド原点の飛びを検出する
+        if let observation {
+            guard Self.isPlausibleMotion(
+                translationDelta: simd_length(translation - observation.translation),
+                rotationDelta: simd_angle(between: observation.quaternion, and: quaternion),
+                timeDelta: timestamp - observation.timestamp
+            ) else {
+                return .discontinuity
+            }
+        }
+
         let timeDelta = timestamp - lastTimestamp
         let translationDelta = simd_length(translation - lastTranslation)
         let rotationDelta = simd_angle(between: lastQuaternion, and: quaternion)
-
-        guard Self.isPlausibleMotion(
-            translationDelta: translationDelta,
-            rotationDelta: rotationDelta,
-            timeDelta: timeDelta
-        ) else {
-            return .discontinuity
-        }
 
         if timeDelta >= maxFrameInterval { return .capture }
         if translationDelta >= minTranslationDistance { return .capture }
@@ -380,12 +393,14 @@ final class DepthProcessor {
         lastTranslation = translation
         lastQuaternion = quaternion
         lastTimestamp = timestamp
+        previousObservation = (translation, quaternion, timestamp)
     }
 
     func reset() {
         lastTranslation = .zero
         lastQuaternion = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
         lastTimestamp = 0
+        previousObservation = nil
     }
 
     // MARK: - Private Helpers
