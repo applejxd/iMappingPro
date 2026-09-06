@@ -29,6 +29,9 @@ struct PoseFrame: Codable, Identifiable {
     let depthWidth: Int
     let depthHeight: Int
 
+    /// キャプチャ時の品質情報（旧形式のデータでは nil）
+    let quality: FrameQuality?
+
     // MARK: - Computed Properties
 
     var translation: SIMD3<Float> {
@@ -59,7 +62,8 @@ struct PoseFrame: Codable, Identifiable {
         imageWidth: Int,
         imageHeight: Int,
         depthWidth: Int,
-        depthHeight: Int
+        depthHeight: Int,
+        quality: FrameQuality? = nil
     ) {
         self.id = id
         self.index = index
@@ -79,5 +83,6 @@ struct PoseFrame: Codable, Identifiable {
         self.imageHeight = imageHeight
         self.depthWidth = depthWidth
         self.depthHeight = depthHeight
+        self.quality = quality
     }
 }

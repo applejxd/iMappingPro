@@ -95,6 +95,11 @@ struct ScanView: View {
                 Text(formattedElapsed)
                     .font(.caption.monospacedDigit())
                     .foregroundColor(.white)
+                if viewModel.missingDepthCount > 0 {
+                    Text("深度欠落 \(viewModel.missingDepthCount)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.yellow)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)

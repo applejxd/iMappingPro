@@ -1,6 +1,7 @@
 #if canImport(ARKit)
 import ARKit
 import RealityKit
+import os
 
 // MARK: - Tracking State
 
@@ -37,11 +38,37 @@ enum TrackingState {
     }
 }
 
+// MARK: - CapturedFrame
+
+/// ARKit のフレームからコピー済みのキャプチャ結果
+///
+/// `ARFrame` の `capturedImage` / `sceneDepth` はデリゲートコールバックの間だけ
+/// 内容が保証されるプール由来のバッファのため、必ずこの値型へコピーしてから
+/// 他のスレッド・アクターへ渡す。
+struct CapturedFrame {
+    let index: Int
+    let timestamp: TimeInterval
+    let relativePose: simd_float4x4
+    let translation: SIMD3<Float>
+    let quaternion: simd_quatf
+    let intrinsics: simd_float3x3
+    let imageWidth: Int
+    let imageHeight: Int
+    let depthWidth: Int
+    let depthHeight: Int
+    let colorData: Data
+    let depthData: Data?
+    let confidenceData: Data?
+    let quality: FrameQuality
+    /// このフレームまでに深度が取得できなかった累計フレーム数
+    let missingDepthCount: Int
+}
+
 // MARK: - ARSessionManagerDelegate
 
 @MainActor
 protocol ARSessionManagerDelegate: AnyObject {
-    func sessionManager(_ manager: ARSessionManager, didUpdate frame: ARFrame, relativePose: simd_float4x4)
+    func sessionManager(_ manager: ARSessionManager, didCapture frame: CapturedFrame)
     func sessionManager(_ manager: ARSessionManager, trackingStateChanged state: TrackingState)
     func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error)
 }
@@ -58,6 +85,18 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private(set) var arSession: ARSession = ARSession()
     private var initialTransform: simd_float4x4?
     private var isCapturing: Bool = false
+    /// `arSession.run` 済みかどうか（二重 run によるワールド原点リセットを防ぐ）
+    private(set) var isSessionRunning: Bool = false
+    /// 有効な最初のフレームを待っている状態か
+    private var isWaitingForValidStart: Bool = false
+    /// 採用したフレームに与える連番
+    private var nextFrameIndex: Int = 0
+    /// 深度が取得できずスキップしたフレーム数
+    private(set) var missingDepthCount: Int = 0
+
+    private let keyframeSelector = DepthProcessor()
+
+    private let logger = Logger(subsystem: "com.imappingpro.arcore", category: "ARSessionManager")
 
     /// LiDAR 非対応デバイスかどうか
     static var isLiDARSupported: Bool {
@@ -67,7 +106,10 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     // MARK: - Session Control
 
     /// ARKit セッションを開始する
-    func startSession() {
+    ///
+    /// 既に実行中の場合は何もしない。`resetTracking` が `true` のときだけ
+    /// ワールド原点をリセットして再構成する。
+    func startSession(resetTracking: Bool = false) {
         guard Self.isLiDARSupported else {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -76,18 +118,31 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
             return
         }
 
+        guard resetTracking || !isSessionRunning else { return }
+
         let configuration = ARWorldTrackingConfiguration()
         configuration.sceneReconstruction = .meshWithClassification
         configuration.frameSemantics = [.sceneDepth, .smoothedSceneDepth]
         configuration.planeDetection = [.horizontal, .vertical]
 
         arSession.delegate = self
-        arSession.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        if resetTracking {
+            arSession.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        } else {
+            arSession.run(configuration)
+        }
+        isSessionRunning = true
     }
 
     /// キャプチャを開始（初期姿勢をリセット）
+    ///
+    /// 実際の原点はトラッキングが正常かつ深度が得られる最初のフレームで確定する。
     func startCapture() {
         initialTransform = nil
+        isWaitingForValidStart = true
+        nextFrameIndex = 0
+        missingDepthCount = 0
+        keyframeSelector.reset()
         isCapturing = true
     }
 
@@ -104,13 +159,18 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// セッションを一時停止
     func pauseSession() {
         arSession.pause()
+        isSessionRunning = false
     }
 
     /// セッションを完全リセット
     func resetSession() {
         stopCapture()
         initialTransform = nil
-        startSession()
+        isWaitingForValidStart = false
+        nextFrameIndex = 0
+        missingDepthCount = 0
+        keyframeSelector.reset()
+        startSession(resetTracking: true)
     }
 
     // MARK: - Pose Calculation
@@ -145,10 +205,106 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard isCapturing else { return }
 
+        let tracking = FrameTrackingQuality(frame.camera.trackingState)
+        // 深度は平滑化済みを優先する（無効画素が少なく、低テクスチャ面でも穴が埋まりやすい）
+        let sceneDepth = frame.smoothedSceneDepth ?? frame.sceneDepth
+
+        // 深度パイプラインが立ち上がり、トラッキングが正常になるまで採用を保留する。
+        // ここを通過した最初のフレームで初期姿勢（原点）を確定させる。
+        if isWaitingForValidStart {
+            guard tracking.isReliable, sceneDepth != nil else { return }
+            isWaitingForValidStart = false
+        }
+
         let relativePose = relativeTransform(from: frame.camera.transform)
+        let translation = SIMD3<Float>(
+            relativePose.columns.3.x,
+            relativePose.columns.3.y,
+            relativePose.columns.3.z
+        )
+        let quaternion = simd_quaternion(relativePose)
+        let timestamp = frame.timestamp
+        let isFirst = nextFrameIndex == 0
+
+        switch keyframeSelector.evaluate(
+            translation: translation,
+            quaternion: quaternion,
+            timestamp: timestamp,
+            isFirst: isFirst,
+            tracking: tracking
+        ) {
+        case .skip:
+            return
+        case .discontinuity:
+            // ワールド原点のリセット等による姿勢の飛び。フレームは破棄し、
+            // 以降の判定基準だけを現在値へ引き継ぐ。
+            logger.warning("姿勢が不連続なフレームを破棄しました (timestamp: \(timestamp, privacy: .public))")
+            keyframeSelector.updateLast(
+                translation: translation,
+                quaternion: quaternion,
+                timestamp: timestamp
+            )
+            return
+        case .capture:
+            break
+        }
+
+        keyframeSelector.updateLast(translation: translation, quaternion: quaternion, timestamp: timestamp)
+
+        // ARFrame のバッファはこのコールバック内でのみ有効なため、ここで Data 化する
+        let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: frame.capturedImage) ?? Data()
+        let depthData = sceneDepth.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0.depthMap) }
+        let confidenceData = sceneDepth.flatMap { depth -> Data? in
+            guard let confidenceMap = depth.confidenceMap else { return nil }
+            return DepthProcessor.confidenceToData(pixelBuffer: confidenceMap)
+        }
+        let confidenceMean = sceneDepth.flatMap { depth -> Float? in
+            guard let confidenceMap = depth.confidenceMap else { return nil }
+            return DepthProcessor.confidenceMean(pixelBuffer: confidenceMap)
+        }
+
+        if depthData == nil {
+            missingDepthCount += 1
+            logger.warning("深度マップを取得できませんでした (index: \(self.nextFrameIndex, privacy: .public))")
+        }
+
+        let depthSize: CGSize
+        if let depthMap = sceneDepth?.depthMap {
+            depthSize = CGSize(
+                width: CVPixelBufferGetWidth(depthMap),
+                height: CVPixelBufferGetHeight(depthMap)
+            )
+        } else {
+            depthSize = .zero
+        }
+        let imageSize = CVImageBufferGetEncodedSize(frame.capturedImage)
+
+        let captured = CapturedFrame(
+            index: nextFrameIndex,
+            timestamp: timestamp,
+            relativePose: relativePose,
+            translation: translation,
+            quaternion: quaternion,
+            intrinsics: frame.camera.intrinsics,
+            imageWidth: Int(imageSize.width),
+            imageHeight: Int(imageSize.height),
+            depthWidth: Int(depthSize.width),
+            depthHeight: Int(depthSize.height),
+            colorData: colorData,
+            depthData: depthData,
+            confidenceData: confidenceData,
+            quality: FrameQuality(
+                tracking: tracking,
+                depthValidRatio: depthData.flatMap { DepthProcessor.depthValidRatio(binary: $0) },
+                confidenceMean: confidenceMean
+            ),
+            missingDepthCount: missingDepthCount
+        )
+        nextFrameIndex += 1
+
         let delegate = delegate
         Task { @MainActor in
-            delegate?.sessionManager(self, didUpdate: frame, relativePose: relativePose)
+            delegate?.sessionManager(self, didCapture: captured)
         }
     }
 
@@ -171,6 +327,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {
+        isSessionRunning = false
         let delegate = delegate
         Task { @MainActor in
             delegate?.sessionManager(self, didFailWithError: error)
@@ -185,8 +342,33 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
-        // セッション再開
-        startSession()
+        // 中断明けは原点がずれている可能性があるため、次の有効フレームで原点を取り直す
+        if isCapturing {
+            isWaitingForValidStart = nextFrameIndex == 0
+        }
+    }
+}
+
+// MARK: - FrameTrackingQuality + ARKit
+
+extension FrameTrackingQuality {
+    init(_ state: ARCamera.TrackingState) {
+        switch state {
+        case .normal:
+            self = .normal
+        case .notAvailable:
+            self = .notAvailable
+        case .limited(let reason):
+            switch reason {
+            case .initializing:          self = .limitedInitializing
+            case .relocalizing:          self = .limitedRelocalizing
+            case .excessiveMotion:       self = .limitedExcessiveMotion
+            case .insufficientFeatures:  self = .limitedInsufficientFeatures
+            @unknown default:            self = .limitedUnknown
+            }
+        @unknown default:
+            self = .notAvailable
+        }
     }
 }
 
