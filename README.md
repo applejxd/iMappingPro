@@ -131,10 +131,26 @@ iMappingPro (App) > Documents > iMappingPro > sessions > <UUID> /
     "quaternion": [0.0, 0.0, -0.7071, 0.7071],
     "intrinsics": {"fx": 1440.0, "fy": 1440.0, "cx": 960.0, "cy": 720.0},
     "image_size": {"width": 1920, "height": 1440},
-    "depth_size": {"width": 256, "height": 192}
+    "depth_size": {"width": 256, "height": 192},
+    "quality": {
+      "tracking": "normal",
+      "depth_valid_ratio": 0.93,
+      "confidence_mean": 1.82,
+      "is_trailing": false
+    }
   }]
 }
 ```
+
+`quality` は後段処理でフレームを取捨選択するための付加情報です
+(v1.2 以降。詳細は [docs/system/data-format.md](docs/system/data-format.md))。
+
+### 姿勢の精度について
+
+記録されるのは ARKit の VIO による**オドメトリ**です。ループ閉じ込みや大域バンドル調整は
+行っていないため、長距離の再訪では数十 cm 規模のドリフトが残ることがあります。
+厳密な位置合わせが必要な用途では、出力データを後段の SfM / SLAM
+(COLMAP・Open3D など) に渡して最適化してください。
 
 ---
 

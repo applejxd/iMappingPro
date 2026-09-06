@@ -72,14 +72,17 @@ RGBD フレームと同期して記録・管理する。
 | `ScanSession` | セッションメタデータ (Codable) |
 | `PoseFrame` | 1フレームの姿勢 + カメラパラメータ (Codable) |
 | `PosesContainer` | poses.json のルートオブジェクト |
+| `FrameQuality` | 1フレームの品質情報 (トラッキング状態・深度有効画素率など) |
 
 ## スレッドモデル
 
 ```
 Main Thread (UI)
   ├── ARSession (delegateQueue: main)
-  │     └── session(_:didUpdate:) → ScanViewModel.sessionManager(_:didUpdate:relativePose:)
-  │           └── [heavy work] → Task (Swift Concurrency)
+  │     └── session(_:didUpdate:)
+  │           ├── キーフレーム判定 (DepthProcessor)
+  │           ├── ARFrame のバッファを Data へコピー
+  │           └── CapturedFrame を @MainActor へ引き渡し
   └── SwiftUI ビュー更新 (@MainActor)
 
 Swift Concurrency Task (background)
@@ -95,32 +98,36 @@ ARKit (ARFrame)
     │
     ▼ session(_:didUpdate:) [~30fps]
 ARSessionManager
+    │ 開始ゲート (tracking == normal かつ深度あり)
     │ relativeTransform()
-    │ delegate callback
-    ▼
-ScanViewModel.sessionManager(_:didUpdate:relativePose:)
-    │ KeyFrameSelector.shouldCapture()
+    │ DepthProcessor.evaluate()
     │
-    ├─→ [reject] → 次フレーム待機
+    ├─→ [skip]          → 次フレーム待機
+    ├─→ [discontinuity] → 姿勢の飛びとして破棄
     │
-    └─→ [accept]
+    └─→ [capture]
           │ DepthProcessor.colorToJPEGData()
           │ DepthProcessor.depthToBinary()
           │ DepthProcessor.confidenceToData()
-          │ MeshExporter.objData()          (保存時に 1 回)
-          │ PointCloudExporter.plyData()    (保存時に 1 回)
+          │
+          ▼ CapturedFrame (値型・Data のみ)
+    │ delegate callback (@MainActor)
+    ▼
+ScanViewModel.sessionManager(_:didCapture:)
           │
           ▼ append to buffer
-          capturedFrames: [PoseFrame]
-          pendingFrameData: [(color, depth, conf)]
+          capturedRecords: [CapturedFrame]
           │
           ▼ UI update (@MainActor)
-          frameCount, totalDistance
+          frameCount, totalDistance, missingDepthCount
 
 User → Save ボタン
     │
     ▼
 ScanViewModel.saveSession(name:)
+    │ ScanViewModel.poseFrames(from:)  (index 整列・末尾フラグ付与)
+    │ MeshExporter.objData()          (保存時に 1 回)
+    │ PointCloudExporter.plyData()    (保存時に 1 回)
     │ async Task
     │ SessionStorage.createSessionDirectory()
     │ SessionStorage.saveColorImage() × N (parallel)

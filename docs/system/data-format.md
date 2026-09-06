@@ -66,7 +66,13 @@ Documents/
         "cy": 720.0
       },
       "image_size": { "width": 1920, "height": 1440 },
-      "depth_size": { "width": 256, "height": 192 }
+      "depth_size": { "width": 256, "height": 192 },
+      "quality": {
+        "tracking": "normal",
+        "depth_valid_ratio": 0.93,
+        "confidence_mean": 1.82,
+        "is_trailing": false
+      }
     },
     {
       "index": 1,
@@ -100,6 +106,40 @@ Z 軸まわり -90° の回転（`[0, 0, -0.7071, 0.7071]`）になる。`transl
 
 > **互換性**: v1.1 以前に保存したセッションは、ARKit カメラ座標系（横倒し）が
 > そのまま相対座標系になっている。
+
+### quality — フレーム品質情報
+
+後段の SfM / SLAM がフレームを取捨選択するための付加情報。v1.2 以降のセッションにのみ存在し、
+それ以前のデータでは省略される（読み込み側は欠落を許容すること）。
+
+| キー | 型 | 内容 |
+|---|---|---|
+| `tracking` | string | キャプチャ時のトラッキング状態 |
+| `depth_valid_ratio` | number \| null | 深度マップの有効画素率 (0〜1)。深度なしの場合 null |
+| `confidence_mean` | number \| null | 信頼度マップの平均レベル (0〜2)。信頼度なしの場合 null |
+| `is_trailing` | bool | スキャン末尾の 5 フレームか（保存操作時の手ブレが乗りやすい区間） |
+
+`tracking` の値:
+
+| 値 | 意味 |
+|---|---|
+| `normal` | トラッキング正常 |
+| `limited_initializing` | 初期化中 |
+| `limited_relocalizing` | 再ローカライズ中 |
+| `limited_excessive_motion` | 動きが速すぎる（キーフレームには採用されない） |
+| `limited_insufficient_features` | テクスチャ不足 |
+| `limited_unknown` | その他の制限 |
+| `not_available` | トラッキング不可 |
+
+`tracking` が `normal` 以外、`is_trailing` が `true`、または `depth_valid_ratio` が 0.2 未満の
+フレームは低品質として除外を検討することを推奨する。
+
+### キャプチャ開始条件
+
+先頭フレームは、トラッキングが `normal` かつ深度マップが取得できる最初のフレームでのみ確定する。
+また、フレーム間の姿勢変化が物理的にあり得ない量（並進 5 m/s 超、回転 7 rad/s 超）の場合は
+ワールド原点のリセットとみなしてフレームを破棄する。
+このため先頭数フレームを後処理で除外する必要はない。
 
 ## _color.jpg
 
@@ -137,6 +177,10 @@ Offset  Size    Type        Description
 
 - 有効範囲: 0.1 〜 10.0 m (NaN は無効値)
 - 0.0 は深度未測定を意味する
+- 取得元は `ARFrame.smoothedSceneDepth`（利用できない場合は `sceneDepth`）
+- 行パディングは書き出し時に取り除かれるため、常に `width * height * 4` バイトが連続する
+- 深度が取得できなかったフレームではファイル自体が存在せず、`poses.json` の
+  `depth_size` は `0 x 0`、`quality.depth_valid_ratio` は `null` になる
 
 ## _conf.png
 

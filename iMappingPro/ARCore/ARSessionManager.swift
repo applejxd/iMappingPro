@@ -2,6 +2,9 @@
 import ARKit
 import RealityKit
 import os
+#if canImport(simd)
+import simd
+#endif
 
 // MARK: - Tracking State
 
@@ -48,7 +51,6 @@ enum TrackingState {
 struct CapturedFrame {
     let index: Int
     let timestamp: TimeInterval
-    let relativePose: simd_float4x4
     let translation: SIMD3<Float>
     let quaternion: simd_quatf
     let intrinsics: simd_float3x3
@@ -282,7 +284,6 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         let captured = CapturedFrame(
             index: nextFrameIndex,
             timestamp: timestamp,
-            relativePose: relativePose,
             translation: translation,
             quaternion: quaternion,
             intrinsics: frame.camera.intrinsics,
