@@ -112,8 +112,9 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// ARKit セッションを開始する
     ///
     /// 既に実行中の場合は何もしない。`resetTracking` が `true` のときだけ
-    /// ワールド原点をリセットして再構成する。
-    func startSession(resetTracking: Bool = false) {
+    /// ワールド原点をリセットして再構成する。割り込み後のプレビュー復帰には
+    /// `forceRestart` を指定して、原点をリセットせずに再実行する。
+    func startSession(resetTracking: Bool = false, forceRestart: Bool = false) {
         guard Self.isLiDARSupported else {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -122,7 +123,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
             return
         }
 
-        guard resetTracking || !isSessionRunning else { return }
+        guard resetTracking || forceRestart || !isSessionRunning else { return }
 
         let configuration = ARWorldTrackingConfiguration()
         configuration.sceneReconstruction = .meshWithClassification
@@ -352,8 +353,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     func sessionInterruptionEnded(_ session: ARSession) {
         guard isCapturing else {
             // プレビュー中は座標系を維持する必要がないため、セッションを再開する。
-            isSessionRunning = false
-            startSession()
+            startSession(forceRestart: true)
             return
         }
 
