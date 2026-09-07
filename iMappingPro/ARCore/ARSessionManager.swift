@@ -71,6 +71,8 @@ struct CapturedFrame {
 @MainActor
 protocol ARSessionManagerDelegate: AnyObject {
     func sessionManager(_ manager: ARSessionManager, didCapture frame: CapturedFrame)
+    /// 録画開始地点（相対座標系の原点）のワールド変換が確定・破棄されたときに通知する
+    func sessionManager(_ manager: ARSessionManager, originDidChange transform: simd_float4x4?)
     func sessionManager(_ manager: ARSessionManager, trackingStateChanged state: TrackingState)
     func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error)
 }
@@ -149,6 +151,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// 実際の原点はトラッキングが正常かつ深度が得られる最初のフレームで確定する。
     func startCapture() {
         initialTransform = nil
+        notifyOriginChanged(nil)
         isWaitingForValidStart = true
         nextFrameIndex = 0
         missingDepthCount = 0
@@ -181,6 +184,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     func resetSession() {
         stopCapture()
         initialTransform = nil
+        notifyOriginChanged(nil)
         isWaitingForValidStart = false
         nextFrameIndex = 0
         missingDepthCount = 0
@@ -197,8 +201,23 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     func relativeTransform(from cameraTransform: simd_float4x4) -> simd_float4x4 {
         if initialTransform == nil {
             initialTransform = cameraTransform
+            notifyOriginChanged(CoordinateSystem.referenceTransform(initial: cameraTransform))
         }
         return CoordinateSystem.relativeTransform(initial: initialTransform!, current: cameraTransform)
+    }
+
+    /// 録画開始地点（相対座標系の原点）のワールド変換
+    ///
+    /// 表示専用の座標軸を配置するために使う。保存データには影響しない。
+    var originWorldTransform: simd_float4x4? {
+        initialTransform.map { CoordinateSystem.referenceTransform(initial: $0) }
+    }
+
+    private func notifyOriginChanged(_ transform: simd_float4x4?) {
+        let delegate = delegate
+        Task { @MainActor in
+            delegate?.sessionManager(self, originDidChange: transform)
+        }
     }
 
     // MARK: - Mesh Snapshot

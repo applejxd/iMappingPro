@@ -37,6 +37,10 @@ final class ScanViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var isSaving: Bool = false
     @Published var savedSession: ScanSession?
+    /// 録画開始地点（相対座標系の原点）のワールド変換
+    ///
+    /// AR プレビューに座標軸を表示するためだけに使い、保存データには含めない。
+    @Published var originTransform: simd_float4x4?
 
     // MARK: - Dependencies
 
@@ -297,6 +301,10 @@ extension ScanViewModel: ARSessionManagerDelegate {
         // 累積移動距離を計算
         totalDistance += simd_length(frame.translation - lastCapturedTranslation)
         lastCapturedTranslation = frame.translation
+    }
+
+    func sessionManager(_ manager: ARSessionManager, originDidChange transform: simd_float4x4?) {
+        originTransform = transform
     }
 
     func sessionManager(_ manager: ARSessionManager, trackingStateChanged state: TrackingState) {
