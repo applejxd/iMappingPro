@@ -350,7 +350,12 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
-        guard isCapturing else { return }
+        guard isCapturing else {
+            // プレビュー中は座標系を維持する必要がないため、セッションを再開する。
+            isSessionRunning = false
+            startSession()
+            return
+        }
 
         if nextFrameIndex == 0 {
             // まだ1枚も採用していないので、次の有効フレームで原点を取り直せばよい
