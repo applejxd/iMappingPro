@@ -151,7 +151,9 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         isCapturing = true
     }
 
-    /// キャプチャを再開（初期姿勢は維持し、座標系の原点を変えない）
+    /// キャプチャを再開（初期姿勢は維持し、座標系の原点を変えない）。
+    ///
+    /// 座標系の整合性を失った後は `false` を返し、再開しない。
     func resumeCapture() -> Bool {
         guard !captureRequiresReset else { return false }
         isCapturing = true

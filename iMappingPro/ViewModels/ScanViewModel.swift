@@ -100,7 +100,10 @@ final class ScanViewModel: ObservableObject {
     func resumeScanning() {
         guard scanState == .paused else { return }
         // 初期姿勢を維持したまま再開する（原点が移動すると姿勢が不連続になる）
-        guard sessionManager.resumeCapture() else { return }
+        guard sessionManager.resumeCapture() else {
+            errorMessage = "座標系の整合性を確認できないため再開できません。ここまでの結果を保存するか、リセットして再スキャンしてください。"
+            return
+        }
         scanState = .scanning
         startTimer()
     }
