@@ -148,10 +148,20 @@ final class DepthProcessor {
         height: Int,
         bytesPerRow: Int
     ) -> Data? {
-        let rowBytes = width * MemoryLayout<Float32>.size
-        guard width > 0, height > 0, bytesPerRow >= rowBytes else { return nil }
+        guard width > 0, height > 0 else { return nil }
+        let (rowBytes, rowBytesOverflow) = width.multipliedReportingOverflow(
+            by: MemoryLayout<Float32>.size
+        )
+        guard !rowBytesOverflow, bytesPerRow >= rowBytes else { return nil }
 
-        var data = Data(capacity: MemoryLayout<UInt32>.size * 2 + rowBytes * height)
+        let (payloadBytes, payloadOverflow) = rowBytes.multipliedReportingOverflow(by: height)
+        guard !payloadOverflow else { return nil }
+
+        let headerBytes = MemoryLayout<UInt32>.size * 2
+        let (totalBytes, totalBytesOverflow) = headerBytes.addingReportingOverflow(payloadBytes)
+        guard !totalBytesOverflow else { return nil }
+
+        var data = Data(capacity: totalBytes)
         // ヘッダ: width, height (UInt32)
         var w = UInt32(width)
         var h = UInt32(height)
@@ -159,12 +169,13 @@ final class DepthProcessor {
         withUnsafeBytes(of: &h) { data.append(contentsOf: $0) }
 
         // 深度値 (Float32) を行単位でコピーしてパディングを取り除く
-        for row in 0..<height {
-            let rowPointer = source.advanced(by: row * bytesPerRow)
+        var rowPointer = source
+        for _ in 0..<height {
             data.append(UnsafeBufferPointer(
                 start: rowPointer.assumingMemoryBound(to: UInt8.self),
                 count: rowBytes
             ))
+            rowPointer = rowPointer.advanced(by: bytesPerRow)
         }
         return data
     }
