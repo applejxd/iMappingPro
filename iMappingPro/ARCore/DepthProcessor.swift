@@ -171,11 +171,31 @@ final class DepthProcessor {
 
     /// `_depth.bin` の有効画素率 (0...1) を求める
     static func depthValidRatio(binary data: Data) -> Float? {
-        guard let map = decodeDepthBinary(data), !map.values.isEmpty else { return nil }
-        let validCount = map.values.reduce(into: 0) { count, value in
-            if value.isFinite && value > 0 { count += 1 }
+        let headerSize = MemoryLayout<UInt32>.size * 2
+        guard data.count >= headerSize else { return nil }
+
+        let width = Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self) })
+        let height = Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
+        let (pixelCount, overflow) = width.multipliedReportingOverflow(by: height)
+        guard width > 0, height > 0, !overflow else { return nil }
+
+        let (payloadSize, payloadOverflow) = pixelCount.multipliedReportingOverflow(
+            by: MemoryLayout<Float32>.size
+        )
+        guard !payloadOverflow, data.count >= headerSize + payloadSize else { return nil }
+
+        let validCount = data.withUnsafeBytes { raw in
+            var count = 0
+            for index in 0..<pixelCount {
+                let value = raw.loadUnaligned(
+                    fromByteOffset: headerSize + index * MemoryLayout<Float32>.size,
+                    as: Float32.self
+                )
+                if value.isFinite && value > 0 { count += 1 }
+            }
+            return count
         }
-        return Float(validCount) / Float(map.values.count)
+        return Float(validCount) / Float(pixelCount)
     }
 
     /// `_depth.bin` をデコードした結果

@@ -221,11 +221,15 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         let tracking = FrameTrackingQuality(frame.camera.trackingState)
         // 深度は平滑化済みを優先する（無効画素が少なく、低テクスチャ面でも穴が埋まりやすい）
         let sceneDepth = frame.smoothedSceneDepth ?? frame.sceneDepth
+        var validatedStartDepthData: Data?
 
         // 深度パイプラインが立ち上がり、トラッキングが正常になるまで採用を保留する。
         // ここを通過した最初のフレームで初期姿勢（原点）を確定させる。
         if isWaitingForValidStart {
-            guard tracking.isReliable, sceneDepth != nil else { return }
+            guard tracking.isReliable,
+                  let depthMap = sceneDepth?.depthMap,
+                  let depthData = DepthProcessor.depthToBinary(pixelBuffer: depthMap) else { return }
+            validatedStartDepthData = depthData
             isWaitingForValidStart = false
         }
 
@@ -266,7 +270,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
 
         // ARFrame のバッファはこのコールバック内でのみ有効なため、ここで Data 化する
         let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: frame.capturedImage) ?? Data()
-        let depthData = sceneDepth.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0.depthMap) }
+        let depthData = validatedStartDepthData
+            ?? sceneDepth.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0.depthMap) }
         let confidenceData = sceneDepth.flatMap { depth -> Data? in
             guard let confidenceMap = depth.confidenceMap else { return nil }
             return DepthProcessor.confidenceToData(pixelBuffer: confidenceMap)
