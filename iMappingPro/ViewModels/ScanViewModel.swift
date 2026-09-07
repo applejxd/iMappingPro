@@ -100,7 +100,7 @@ final class ScanViewModel: ObservableObject {
     func resumeScanning() {
         guard scanState == .paused else { return }
         // 初期姿勢を維持したまま再開する（原点が移動すると姿勢が不連続になる）
-        sessionManager.resumeCapture()
+        guard sessionManager.resumeCapture() else { return }
         scanState = .scanning
         startTimer()
     }

@@ -166,7 +166,8 @@ final class KeyframeMotionValidationTests: XCTestCase {
         )
     }
 
-    func testEvaluateCapturesNormalKeyframe() {        processor.updateLast(
+    func testEvaluateCapturesNormalKeyframe() {
+        processor.updateLast(
             translation: .zero,
             quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
             timestamp: 0

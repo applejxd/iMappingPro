@@ -91,6 +91,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private(set) var isSessionRunning: Bool = false
     /// 有効な最初のフレームを待っている状態か
     private var isWaitingForValidStart: Bool = false
+    /// 座標系の整合性を失い、保存またはリセットが必要か
+    private var captureRequiresReset: Bool = false
     /// 採用したフレームに与える連番
     private var nextFrameIndex: Int = 0
     /// 深度が取得できずスキップしたフレーム数
@@ -145,12 +147,15 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         nextFrameIndex = 0
         missingDepthCount = 0
         keyframeSelector.reset()
+        captureRequiresReset = false
         isCapturing = true
     }
 
     /// キャプチャを再開（初期姿勢は維持し、座標系の原点を変えない）
-    func resumeCapture() {
+    func resumeCapture() -> Bool {
+        guard !captureRequiresReset else { return false }
         isCapturing = true
+        return true
     }
 
     /// キャプチャを停止（セッションは維持）
@@ -238,14 +243,14 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         case .skip:
             return
         case .discontinuity:
-            // ワールド原点のリセット等による姿勢の飛び。フレームは破棄し、
-            // 以降の判定基準だけを現在値へ引き継ぐ。
-            logger.warning("姿勢が不連続なフレームを破棄しました (timestamp: \(timestamp, privacy: .public))")
-            keyframeSelector.updateLast(
-                translation: translation,
-                quaternion: quaternion,
-                timestamp: timestamp
-            )
+            // ワールド原点が切り替わった可能性があるため、既存軌跡との混在を防ぐ。
+            isCapturing = false
+            captureRequiresReset = true
+            logger.warning("姿勢の不連続を検出したためキャプチャを停止しました (timestamp: \(timestamp, privacy: .public))")
+            let delegate = delegate
+            Task { @MainActor in
+                delegate?.sessionManager(self, didFailWithError: ARSessionError.discontinuityDuringCapture)
+            }
             return
         case .capture:
             break
@@ -271,7 +276,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         }
 
         let depthSize: CGSize
-        if let depthMap = sceneDepth?.depthMap {
+        if depthData != nil, let depthMap = sceneDepth?.depthMap {
             depthSize = CGSize(
                 width: CVPixelBufferGetWidth(depthMap),
                 height: CVPixelBufferGetHeight(depthMap)
@@ -354,6 +359,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         // 既存フレームとは別のワールド座標系になっている可能性がある。
         // 黙って繋ぐと軌跡が壊れるため、キャプチャを停止してユーザに委ねる。
         isCapturing = false
+        captureRequiresReset = true
         logger.warning("セッション中断のためキャプチャを停止しました (frames: \(self.nextFrameIndex, privacy: .public))")
         let delegate = delegate
         Task { @MainActor in
@@ -391,6 +397,7 @@ enum ARSessionError: LocalizedError {
     case lidarNotSupported
     case sessionFailed(String)
     case interruptedDuringCapture
+    case discontinuityDuringCapture
 
     var errorDescription: String? {
         switch self {
@@ -400,6 +407,8 @@ enum ARSessionError: LocalizedError {
             return "ARKit セッションエラー: \(message)"
         case .interruptedDuringCapture:
             return "セッションが中断されました。ワールド原点がずれる可能性があるため、キャプチャを停止しました。ここまでの結果を保存するか、リセットして再スキャンしてください。"
+        case .discontinuityDuringCapture:
+            return "姿勢の不連続を検出しました。ワールド原点がずれた可能性があるため、キャプチャを停止しました。ここまでの結果を保存するか、リセットして再スキャンしてください。"
         }
     }
 }
