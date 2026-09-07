@@ -171,7 +171,7 @@ final class DepthProcessor {
         // 深度値 (Float32) を行単位でコピーしてパディングを取り除く
         var rowPointer = source
         for _ in 0..<height {
-            data.append(UnsafeBufferPointer(
+            data.append(contentsOf: UnsafeBufferPointer(
                 start: rowPointer.assumingMemoryBound(to: UInt8.self),
                 count: rowBytes
             ))
