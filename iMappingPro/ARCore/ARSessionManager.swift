@@ -89,6 +89,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private var isCapturing: Bool = false
     /// `arSession.run` 済みかどうか（二重 run によるワールド原点リセットを防ぐ）
     private(set) var isSessionRunning: Bool = false
+    /// 割り込み開始時にセッションが実行中だったか
+    private var wasSessionRunningBeforeInterruption: Bool = false
     /// 有効な最初のフレームを待っている状態か
     private var isWaitingForValidStart: Bool = false
     /// 座標系の整合性を失い、保存またはリセットが必要か
@@ -344,6 +346,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func sessionWasInterrupted(_ session: ARSession) {
+        wasSessionRunningBeforeInterruption = isSessionRunning
         let delegate = delegate
         Task { @MainActor in
             delegate?.sessionManager(self, trackingStateChanged: .notAvailable)
@@ -351,7 +354,11 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
+        let shouldRestartSession = wasSessionRunningBeforeInterruption
+        wasSessionRunningBeforeInterruption = false
+
         guard isCapturing else {
+            guard shouldRestartSession else { return }
             // プレビュー中は座標系を維持する必要がないため、セッションを再開する。
             startSession(forceRestart: true)
             return
