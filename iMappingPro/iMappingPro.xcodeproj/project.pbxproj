@@ -25,6 +25,7 @@
 		B001001000000011 /* MeshPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001100000011 /* MeshPreviewView.swift */; };
 		B001001100000012 /* CoordinateSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001200000012 /* CoordinateSystem.swift */; };
 		B001001200000013 /* PointCloudExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001300000013 /* PointCloudExporter.swift */; };
+		B001001300000014 /* FrameQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001400000014 /* FrameQuality.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +48,7 @@
 		A001001100000011 /* MeshPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeshPreviewView.swift; sourceTree = "<group>"; };
 		A001001200000012 /* CoordinateSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateSystem.swift; sourceTree = "<group>"; };
 		A001001300000013 /* PointCloudExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudExporter.swift; sourceTree = "<group>"; };
+		A001001400000014 /* FrameQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameQuality.swift; sourceTree = "<group>"; };
 		A001000F0000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -82,6 +84,7 @@
 				A001000300000003 /* ScanSession.swift */,
 				A001000400000004 /* PoseFrame.swift */,
 				A001000500000005 /* PosesContainer.swift */,
+				A001001400000014 /* FrameQuality.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -217,6 +220,7 @@
 				B001000300000003 /* ScanSession.swift in Sources */,
 				B001000400000004 /* PoseFrame.swift in Sources */,
 				B001000500000005 /* PosesContainer.swift in Sources */,
+				B001001300000014 /* FrameQuality.swift in Sources */,
 				B001000600000006 /* ARSessionManager.swift in Sources */,
 				B001000700000007 /* DepthProcessor.swift in Sources */,
 				B001000800000008 /* SessionStorage.swift in Sources */,

@@ -20,50 +20,84 @@ final class DepthProcessor {
 
     /// Float32 深度マップを独自バイナリ形式に変換する
     /// フォーマット: [UInt32 width][UInt32 height][Float32 * width * height]
+    ///
+    /// ピクセルフォーマットが Float32 深度でない場合は nil を返す。
+    /// 行パディング（`bytesPerRow` > `width * 4`）がある場合も行単位でコピーして詰める。
     static func depthToBinary(pixelBuffer: CVPixelBuffer) -> Data? {
+        guard isSupportedDepthPixelFormat(CVPixelBufferGetPixelFormatType(pixelBuffer)) else {
+            return nil
+        }
+
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
 
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
 
-        var data = Data()
-        // ヘッダ: width, height (UInt32)
-        var w = UInt32(width)
-        var h = UInt32(height)
-        data.append(contentsOf: withUnsafeBytes(of: &w) { Array($0) })
-        data.append(contentsOf: withUnsafeBytes(of: &h) { Array($0) })
-
-        // 深度値 (Float32)
-        let byteCount = width * height * MemoryLayout<Float32>.size
-        let depthData = Data(bytes: baseAddress, count: byteCount)
-        data.append(depthData)
-
-        return data
+        return depthBinary(
+            source: baseAddress,
+            width: width,
+            height: height,
+            bytesPerRow: bytesPerRow
+        )
     }
 
     /// 信頼度マップを PNG 用 Data に変換する（UInt8 グレースケール）
     static func confidenceToData(pixelBuffer: CVPixelBuffer) -> Data? {
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_OneComponent8 else {
+            return nil
+        }
+
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
 
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        guard width > 0, height > 0, bytesPerRow >= width else { return nil }
 
         guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
 
         // UInt8 の各値をグレースケール値にマッピング（0=0, 1=127, 2=254）
-        let ptr = baseAddress.assumingMemoryBound(to: UInt8.self)
         var pixels = [UInt8](repeating: 0, count: width * height)
-        for i in 0..<(width * height) {
-            let level = min(Int(ptr[i]), 2)
-            pixels[i] = UInt8(level * 127)
+        for row in 0..<height {
+            let rowPtr = baseAddress.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+            for column in 0..<width {
+                let level = min(Int(rowPtr[column]), 2)
+                pixels[row * width + column] = UInt8(level * 127)
+            }
         }
 
         // CGImage 経由で PNG Data を作成
         return createGrayscalePNG(pixels: pixels, width: width, height: height)
+    }
+
+    /// 信頼度マップの平均レベル (0...2) を求める
+    static func confidenceMean(pixelBuffer: CVPixelBuffer) -> Float? {
+        guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_OneComponent8 else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        guard width > 0, height > 0, bytesPerRow >= width else { return nil }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
+
+        var total = 0
+        for row in 0..<height {
+            let rowPtr = baseAddress.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+            for column in 0..<width {
+                total += min(Int(rowPtr[column]), 2)
+            }
+        }
+        return Float(total) / Float(width * height)
     }
 
     /// RGB フレームを JPEG Data に変換する（YCbCr → UIImage 経由）
@@ -94,6 +128,87 @@ final class DepthProcessor {
     #endif
 
     // MARK: - Depth Binary Decoding
+
+    /// Float32 深度の CVPixelBuffer フォーマット (`kCVPixelFormatType_DepthFloat32`)
+    ///
+    /// CoreVideo が使えない環境でも参照できるよう生値で保持する。
+    static let depthFloat32PixelFormat: UInt32 = 0x6664_6570 // 'fdep'
+
+    /// `depthToBinary` が扱える深度フォーマットかどうか
+    static func isSupportedDepthPixelFormat(_ rawValue: UInt32) -> Bool {
+        rawValue == depthFloat32PixelFormat
+    }
+
+    /// Float32 深度の生バッファを行パディングを除いた独自バイナリ形式へ詰め直す
+    ///
+    /// フォーマット: [UInt32 width][UInt32 height][Float32 * width * height]
+    static func depthBinary(
+        source: UnsafeRawPointer,
+        width: Int,
+        height: Int,
+        bytesPerRow: Int
+    ) -> Data? {
+        guard width > 0, height > 0 else { return nil }
+        guard let width32 = UInt32(exactly: width), let height32 = UInt32(exactly: height) else { return nil }
+        let (rowBytes, rowBytesOverflow) = width.multipliedReportingOverflow(
+            by: MemoryLayout<Float32>.size
+        )
+        guard !rowBytesOverflow, bytesPerRow >= rowBytes else { return nil }
+
+        let (payloadBytes, payloadOverflow) = rowBytes.multipliedReportingOverflow(by: height)
+        guard !payloadOverflow else { return nil }
+
+        let headerBytes = MemoryLayout<UInt32>.size * 2
+        let (totalBytes, totalBytesOverflow) = headerBytes.addingReportingOverflow(payloadBytes)
+        guard !totalBytesOverflow else { return nil }
+
+        var data = Data(capacity: totalBytes)
+        // ヘッダ: width, height (UInt32)
+        var w = width32
+        var h = height32
+        withUnsafeBytes(of: &w) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: &h) { data.append(contentsOf: $0) }
+
+        // 深度値 (Float32) を行単位でコピーしてパディングを取り除く
+        var rowPointer = source
+        for _ in 0..<height {
+            data.append(contentsOf: UnsafeBufferPointer(
+                start: rowPointer.assumingMemoryBound(to: UInt8.self),
+                count: rowBytes
+            ))
+            rowPointer = rowPointer.advanced(by: bytesPerRow)
+        }
+        return data
+    }
+
+    /// `_depth.bin` の有効画素率 (0...1) を求める
+    static func depthValidRatio(binary data: Data) -> Float? {
+        let headerSize = MemoryLayout<UInt32>.size * 2
+        guard data.count >= headerSize else { return nil }
+
+        let width = Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self) })
+        let height = Int(data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self) })
+        let (pixelCount, overflow) = width.multipliedReportingOverflow(by: height)
+        guard width > 0, height > 0, !overflow else { return nil }
+
+        let (payloadSize, payloadOverflow) = pixelCount.multipliedReportingOverflow(
+            by: MemoryLayout<Float32>.size
+        )
+        guard !payloadOverflow, data.count >= headerSize + payloadSize else { return nil }
+
+        let validCount = data.withUnsafeBytes { raw in
+            var count = 0
+            for index in 0..<pixelCount {
+                let value = raw.loadUnaligned(
+                    fromByteOffset: headerSize + index * MemoryLayout<Float32>.size,
+                    as: Float32.self
+                )
+                if value.isFinite && value > 0 { count += 1 }
+            }
+            return count
+        }
+        return Float(validCount) / Float(pixelCount)
+    }
 
     /// `_depth.bin` をデコードした結果
     struct DecodedDepthMap: Equatable {
@@ -191,9 +306,98 @@ final class DepthProcessor {
     private var lastQuaternion: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
     private var lastTimestamp: TimeInterval = 0
 
+    /// 直前に評価した（採用したとは限らない）フレームの姿勢
+    ///
+    /// 姿勢の不連続はキーフレーム間隔ではなくフレーム間隔で判定する必要があるため、
+    /// 採用時のみ更新する `last*` とは別に保持する。
+    private var previousObservation: (translation: SIMD3<Float>, quaternion: simd_quatf, timestamp: TimeInterval)?
+
     let minTranslationDistance: Float = 0.05  // 5cm
     let minRotationAngle: Float = 0.05        // ~3°
     let maxFrameInterval: TimeInterval = 1.0  // 最大1秒
+
+    /// 物理的にあり得る並進速度の上限 (m/s)
+    ///
+    /// 手持ちスキャンで到達し得ない速度。これを超える変化はワールド原点の
+    /// リセットや再ローカライズによる姿勢の飛びとみなす。
+    static let maxTranslationSpeed: Float = 5.0
+    /// 物理的にあり得る回転速度の上限 (rad/s) ≈ 400°/s
+    static let maxRotationSpeed: Float = 7.0
+    /// フレーム間隔の測定誤差を吸収する許容量
+    static let motionToleranceTranslation: Float = 0.05  // 5cm
+    static let motionToleranceRotation: Float = 0.10     // ~5.7°
+
+    /// キーフレーム判定の結果
+    enum CaptureDecision: Equatable {
+        /// キーフレームとして採用する
+        case capture
+        /// 閾値未満・低品質のため見送る
+        case skip
+        /// 姿勢が不連続なので破棄し、トラッキング再初期化として扱う
+        case discontinuity
+    }
+
+    /// フレーム間の姿勢変化が物理的に妥当かどうかを判定する
+    ///
+    /// ワールド原点のリセット直後は、ごく短い時間に大きな並進・回転が現れる。
+    /// このようなフレームは画像と整合しないため破棄する。
+    static func isPlausibleMotion(
+        translationDelta: Float,
+        rotationDelta: Float,
+        timeDelta: TimeInterval
+    ) -> Bool {
+        // 時刻が逆行・停止しているフレームは判定できないため不連続扱い
+        guard timeDelta > 0 else { return false }
+
+        let elapsed = Float(timeDelta)
+        let translationLimit = maxTranslationSpeed * elapsed + motionToleranceTranslation
+        let rotationLimit = maxRotationSpeed * elapsed + motionToleranceRotation
+        return translationDelta <= translationLimit && rotationDelta <= rotationLimit
+    }
+
+    /// 現在のフレームをキーフレームとして採用すべきかを判定する
+    ///
+    /// - Parameters:
+    ///   - isFirst: セッション内で最初に採用されるフレームか
+    ///   - tracking: キャプチャ時のトラッキング品質
+    func evaluate(
+        translation: SIMD3<Float>,
+        quaternion: simd_quatf,
+        timestamp: TimeInterval,
+        isFirst: Bool,
+        tracking: FrameTrackingQuality
+    ) -> CaptureDecision {
+        let observation = previousObservation
+        // 破棄・見送りの場合も次フレームの判定基準になるため必ず更新する
+        previousObservation = (translation, quaternion, timestamp)
+
+        // 動きが速すぎる区間はモーションブラーが強く、対応点が取れないため採用しない
+        if tracking == .limitedExcessiveMotion { return .skip }
+
+        if isFirst {
+            return tracking.isReliable ? .capture : .skip
+        }
+
+        // 直前フレームとの姿勢差でワールド原点の飛びを検出する
+        if let observation {
+            guard Self.isPlausibleMotion(
+                translationDelta: simd_length(translation - observation.translation),
+                rotationDelta: simd_angle(between: observation.quaternion, and: quaternion),
+                timeDelta: timestamp - observation.timestamp
+            ) else {
+                return .discontinuity
+            }
+        }
+
+        let timeDelta = timestamp - lastTimestamp
+        let translationDelta = simd_length(translation - lastTranslation)
+        let rotationDelta = simd_angle(between: lastQuaternion, and: quaternion)
+
+        if timeDelta >= maxFrameInterval { return .capture }
+        if translationDelta >= minTranslationDistance { return .capture }
+        if rotationDelta >= minRotationAngle { return .capture }
+        return .skip
+    }
 
     /// 現在のフレームをキーフレームとして選択すべきかを判定する
     func shouldCapture(
@@ -221,12 +425,14 @@ final class DepthProcessor {
         lastTranslation = translation
         lastQuaternion = quaternion
         lastTimestamp = timestamp
+        previousObservation = (translation, quaternion, timestamp)
     }
 
     func reset() {
         lastTranslation = .zero
         lastQuaternion = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
         lastTimestamp = 0
+        previousObservation = nil
     }
 
     // MARK: - Private Helpers

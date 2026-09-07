@@ -32,6 +32,8 @@ final class ScanViewModel: ObservableObject {
     @Published var elapsedSeconds: Double = 0
     /// 開始地点からの累積移動距離（メートル）
     @Published var totalDistance: Float = 0
+    /// 深度が取得できなかったフレーム数
+    @Published var missingDepthCount: Int = 0
     @Published var errorMessage: String?
     @Published var isSaving: Bool = false
     @Published var savedSession: ScanSession?
@@ -39,13 +41,11 @@ final class ScanViewModel: ObservableObject {
     // MARK: - Dependencies
 
     let sessionManager = ARSessionManager()
-    private let depthProcessor = DepthProcessor()
     private let storage = SessionStorage()
 
     // MARK: - Private
 
-    private var capturedFrames: [PoseFrame] = []
-    private var pendingFrameData: [(colorData: Data, depthData: Data?, confData: Data?)] = []
+    private var capturedRecords: [CapturedFrame] = []
     private var sessionStartTime: Date?
     private var currentSessionID: UUID?
     private var timerTask: Task<Void, Never>?
@@ -71,16 +71,17 @@ final class ScanViewModel: ObservableObject {
 
     func startScanning() {
         guard scanState == .idle else { return }
-        capturedFrames = []
-        pendingFrameData = []
+        capturedRecords = []
         totalDistance = 0
         frameCount = 0
+        missingDepthCount = 0
         elapsedSeconds = 0
         lastCapturedTranslation = .zero
         savedSession = nil
         currentSessionID = nil
 
-        depthProcessor.reset()
+        // 既にプレビューで実行中のセッションを再 run するとワールド原点がリセットされ、
+        // 直後のフレームの姿勢が不連続になるため、ここではキャプチャ開始のみ行う
         sessionManager.startSession()
         sessionManager.startCapture()
         sessionStartTime = Date()
@@ -99,7 +100,10 @@ final class ScanViewModel: ObservableObject {
     func resumeScanning() {
         guard scanState == .paused else { return }
         // 初期姿勢を維持したまま再開する（原点が移動すると姿勢が不連続になる）
-        sessionManager.resumeCapture()
+        guard sessionManager.resumeCapture() else {
+            errorMessage = "座標系の整合性を確認できないため再開できません。ここまでの結果を保存するか、リセットして再スキャンしてください。"
+            return
+        }
         scanState = .scanning
         startTimer()
     }
@@ -110,22 +114,21 @@ final class ScanViewModel: ObservableObject {
         // （停止前に 0 を代入すると、キャンセル済みタスクの最終書き込みで値が戻る）
         stopTimer()
         sessionManager.resetSession()
-        capturedFrames = []
-        pendingFrameData = []
+        capturedRecords = []
         frameCount = 0
+        missingDepthCount = 0
         elapsedSeconds = 0
         totalDistance = 0
         lastCapturedTranslation = .zero
         sessionStartTime = nil
         currentSessionID = nil
         savedSession = nil
-        depthProcessor.reset()
         scanState = .idle
     }
 
     func saveSession(name: String) {
         guard scanState != .saving, !isSaving else { return }
-        guard !capturedFrames.isEmpty else {
+        guard !capturedRecords.isEmpty else {
             errorMessage = "保存するフレームがありません。スキャンを開始してください。"
             return
         }
@@ -138,8 +141,9 @@ final class ScanViewModel: ObservableObject {
         let sessionID = UUID()
         currentSessionID = sessionID
         let duration = elapsedSeconds
-        let frames = capturedFrames
-        let frameDataCopy = pendingFrameData
+        // MainActor への到着順が前後しても保存順が崩れないよう index で整列する
+        let records = capturedRecords.sorted { $0.index < $1.index }
+        let frames = Self.poseFrames(from: records)
         let sessionName = name.isEmpty ? "スキャン \(Date().formatted())" : name
         let storage = self.storage
         // メッシュは Metal バッファ参照のため、セッション停止前にこの時点でスナップショットする
@@ -151,14 +155,13 @@ final class ScanViewModel: ObservableObject {
 
                 // フレームデータを並列書き込み
                 try await withThrowingTaskGroup(of: Void.self) { group in
-                    for (i, data) in frameDataCopy.enumerated() {
-                        let idx = i
+                    for (idx, record) in records.enumerated() {
                         group.addTask {
-                            try storage.saveColorImage(data.colorData, index: idx, sessionID: sessionID)
-                            if let depthData = data.depthData {
+                            try storage.saveColorImage(record.colorData, index: idx, sessionID: sessionID)
+                            if let depthData = record.depthData {
                                 try storage.saveDepthMap(depthData, index: idx, sessionID: sessionID)
                             }
-                            if let confData = data.confData {
+                            if let confData = record.confidenceData {
                                 try storage.saveConfidenceMap(confData, index: idx, sessionID: sessionID)
                             }
                         }
@@ -171,10 +174,10 @@ final class ScanViewModel: ObservableObject {
                 // RGB + 深度から色付き点群を生成して保存（メッシュの色情報の代替）
                 let points = PointCloudExporter.buildPointCloud(
                     frames: frames,
-                    colorJPEGs: frameDataCopy.map { data -> Data? in
-                        data.colorData.isEmpty ? nil : data.colorData
+                    colorJPEGs: records.map { record -> Data? in
+                        record.colorData.isEmpty ? nil : record.colorData
                     },
-                    depthBinaries: frameDataCopy.map { $0.depthData }
+                    depthBinaries: records.map { $0.depthData }
                 )
                 if !points.isEmpty {
                     try storage.savePointCloud(PointCloudExporter.plyData(points: points), sessionID: sessionID)
@@ -205,10 +208,10 @@ final class ScanViewModel: ObservableObject {
                     self.savedSession = session
                     self.isSaving = false
                     self.scanState = .idle
-                    self.capturedFrames = []
-                    self.pendingFrameData = []
+                    self.capturedRecords = []
                     // 次のスキャンに備えて表示値もリセットする
                     self.frameCount = 0
+                    self.missingDepthCount = 0
                     self.elapsedSeconds = 0
                     self.totalDistance = 0
                     self.lastCapturedTranslation = .zero
@@ -251,79 +254,49 @@ final class ScanViewModel: ObservableObject {
         timerTask?.cancel()
         timerTask = nil
     }
+
+    // MARK: - Pose Frames
+
+    /// キャプチャ結果から保存用の `PoseFrame` 配列を作る
+    ///
+    /// フレーム番号は保存順で振り直し、末尾の数フレームには品質フラグを立てる
+    /// （保存操作時の手ブレで視覚拘束が弱くなりやすい区間のため）。
+    static func poseFrames(from records: [CapturedFrame]) -> [PoseFrame] {
+        let trailingStart = max(records.count - FrameQuality.trailingFrameCount, 0)
+        return records.enumerated().map { index, record in
+            PoseFrame(
+                index: index,
+                timestamp: record.timestamp,
+                translation: record.translation,
+                quaternion: record.quaternion,
+                focalLengthX: record.intrinsics[0][0],
+                focalLengthY: record.intrinsics[1][1],
+                principalPointX: record.intrinsics[2][0],
+                principalPointY: record.intrinsics[2][1],
+                imageWidth: record.imageWidth,
+                imageHeight: record.imageHeight,
+                depthWidth: record.depthWidth,
+                depthHeight: record.depthHeight,
+                quality: record.quality.markingTrailing(index >= trailingStart)
+            )
+        }
+    }
 }
 
 // MARK: - ARSessionManagerDelegate
 
 extension ScanViewModel: ARSessionManagerDelegate {
 
-    func sessionManager(
-        _ manager: ARSessionManager,
-        didUpdate frame: ARFrame,
-        relativePose: simd_float4x4
-    ) {
+    func sessionManager(_ manager: ARSessionManager, didCapture frame: CapturedFrame) {
         // 停止・リセット・保存中に遅延到達したフレームは取り込まない
         guard scanState == .scanning else { return }
-        let translation = SIMD3<Float>(
-            relativePose.columns.3.x,
-            relativePose.columns.3.y,
-            relativePose.columns.3.z
-        )
-        let quaternion = simd_quaternion(relativePose)
-        let timestamp = frame.timestamp
-        let isFirst = capturedFrames.isEmpty
 
-        guard depthProcessor.shouldCapture(
-            translation: translation,
-            quaternion: quaternion,
-            timestamp: timestamp,
-            isFirst: isFirst
-        ) else { return }
-
-        depthProcessor.updateLast(translation: translation, quaternion: quaternion, timestamp: timestamp)
-
-        // 深度・カラーデータを収集（バックグラウンドは軽量なのでここで実行）
-        let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: frame.capturedImage)
-        let depthData = frame.sceneDepth.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0.depthMap) }
-        let confData  = frame.sceneDepth.flatMap { depth -> Data? in
-            guard let confidenceMap = depth.confidenceMap else { return nil }
-            return DepthProcessor.confidenceToData(pixelBuffer: confidenceMap)
-        }
-
-        let intrinsics = frame.camera.intrinsics
-        let imageSize = CVImageBufferGetEncodedSize(frame.capturedImage)
-        let depthSize: CGSize
-        if let depthMap = frame.sceneDepth?.depthMap {
-            depthSize = CGSize(
-                width: CVPixelBufferGetWidth(depthMap),
-                height: CVPixelBufferGetHeight(depthMap)
-            )
-        } else {
-            depthSize = .zero
-        }
-
-        let frameIndex = capturedFrames.count
-        let poseFrame = PoseFrame(
-            index: frameIndex,
-            timestamp: timestamp,
-            translation: translation,
-            quaternion: quaternion,
-            focalLengthX: intrinsics[0][0],
-            focalLengthY: intrinsics[1][1],
-            principalPointX: intrinsics[2][0],
-            principalPointY: intrinsics[2][1],
-            imageWidth: Int(imageSize.width),
-            imageHeight: Int(imageSize.height),
-            depthWidth: Int(depthSize.width),
-            depthHeight: Int(depthSize.height)
-        )
-
-        capturedFrames.append(poseFrame)
-        pendingFrameData.append((colorData: colorData ?? Data(), depthData: depthData, confData: confData))
-        frameCount = capturedFrames.count
+        capturedRecords.append(frame)
+        frameCount = capturedRecords.count
+        missingDepthCount = frame.missingDepthCount
         // 累積移動距離を計算
-        totalDistance += simd_length(translation - lastCapturedTranslation)
-        lastCapturedTranslation = translation
+        totalDistance += simd_length(frame.translation - lastCapturedTranslation)
+        lastCapturedTranslation = frame.translation
     }
 
     func sessionManager(_ manager: ARSessionManager, trackingStateChanged state: TrackingState) {
@@ -332,6 +305,11 @@ extension ScanViewModel: ARSessionManagerDelegate {
 
     func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error) {
         errorMessage = error.localizedDescription
+        // セッション側でキャプチャが止められた場合は UI も一時停止状態に合わせる
+        if scanState == .scanning {
+            stopTimer()
+            scanState = .paused
+        }
     }
 }
 

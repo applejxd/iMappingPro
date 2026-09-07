@@ -22,9 +22,11 @@ struct PoseFrameJSON: Codable {
     let intrinsics: IntrinsicsJSON
     let imageSize: SizeJSON
     let depthSize: SizeJSON
+    /// キャプチャ時の品質情報（旧形式との互換のため optional）
+    let quality: FrameQuality?
 
     enum CodingKeys: String, CodingKey {
-        case index, timestamp, translation, quaternion, intrinsics
+        case index, timestamp, translation, quaternion, intrinsics, quality
         case imageSize = "image_size"
         case depthSize = "depth_size"
     }
@@ -42,6 +44,7 @@ struct PoseFrameJSON: Codable {
         )
         self.imageSize = SizeJSON(width: frame.imageWidth, height: frame.imageHeight)
         self.depthSize = SizeJSON(width: frame.depthWidth, height: frame.depthHeight)
+        self.quality = frame.quality
     }
 }
 

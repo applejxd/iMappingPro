@@ -163,7 +163,8 @@ final class SessionStorage {
                 imageWidth: json.imageSize.width,
                 imageHeight: json.imageSize.height,
                 depthWidth: json.depthSize.width,
-                depthHeight: json.depthSize.height
+                depthHeight: json.depthSize.height,
+                quality: json.quality
             )
         }
     }
