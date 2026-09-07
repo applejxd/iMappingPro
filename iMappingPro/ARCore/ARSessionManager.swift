@@ -116,6 +116,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// 既に実行中の場合は何もしない。`resetTracking` が `true` のときだけ
     /// ワールド原点をリセットして再構成する。割り込み後のプレビュー復帰には
     /// `forceRestart` を指定して、原点をリセットせずに再実行する。
+    /// 両方を指定した場合は `resetTracking` を優先する。
     func startSession(resetTracking: Bool = false, forceRestart: Bool = false) {
         guard Self.isLiDARSupported else {
             Task { @MainActor [weak self] in
