@@ -149,6 +149,7 @@ final class DepthProcessor {
         bytesPerRow: Int
     ) -> Data? {
         guard width > 0, height > 0 else { return nil }
+        guard let width32 = UInt32(exactly: width), let height32 = UInt32(exactly: height) else { return nil }
         let (rowBytes, rowBytesOverflow) = width.multipliedReportingOverflow(
             by: MemoryLayout<Float32>.size
         )
@@ -163,8 +164,8 @@ final class DepthProcessor {
 
         var data = Data(capacity: totalBytes)
         // ヘッダ: width, height (UInt32)
-        var w = UInt32(width)
-        var h = UInt32(height)
+        var w = width32
+        var h = height32
         withUnsafeBytes(of: &w) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: &h) { data.append(contentsOf: $0) }
 

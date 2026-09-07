@@ -101,6 +101,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private(set) var missingDepthCount: Int = 0
 
     private let keyframeSelector = DepthProcessor()
+    /// `didCapture` 通知を受信順で直列化する
+    private var pendingCaptureDeliveryTask: Task<Void, Never>?
 
     private let logger = Logger(subsystem: "com.imappingpro.arcore", category: "ARSessionManager")
 
@@ -320,7 +322,9 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         nextFrameIndex += 1
 
         let delegate = delegate
-        Task { @MainActor in
+        let previousDeliveryTask = pendingCaptureDeliveryTask
+        pendingCaptureDeliveryTask = Task { @MainActor in
+            await previousDeliveryTask?.value
             delegate?.sessionManager(self, didCapture: captured)
         }
     }

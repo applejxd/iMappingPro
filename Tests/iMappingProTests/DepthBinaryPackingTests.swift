@@ -114,6 +114,24 @@ final class DepthBinaryPackingTests: XCTestCase {
         }
     }
 
+    func testDepthBinaryRejectsDimensionsOutsideUInt32Range() {
+        let values = [Float](repeating: 1, count: 1)
+        values.withUnsafeBytes { raw in
+            XCTAssertNil(DepthProcessor.depthBinary(
+                source: raw.baseAddress!,
+                width: Int(UInt32.max) + 1,
+                height: 1,
+                bytesPerRow: Int(UInt32.max) + 1
+            ))
+            XCTAssertNil(DepthProcessor.depthBinary(
+                source: raw.baseAddress!,
+                width: 1,
+                height: Int(UInt32.max) + 1,
+                bytesPerRow: MemoryLayout<Float32>.size
+            ))
+        }
+    }
+
     // MARK: - Valid Ratio
 
     func testDepthValidRatio() throws {
