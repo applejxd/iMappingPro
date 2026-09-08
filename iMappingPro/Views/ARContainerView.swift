@@ -15,7 +15,7 @@ struct ARContainerView: UIViewRepresentable {
     ///
     /// 表示専用の座標軸を配置するためだけに使う。RealityKit のエンティティは
     /// `ARMeshAnchor` ではないため、保存されるメッシュ・点群には含まれない。
-    var originTransform: simd_float4x4?
+    var originTransform: simd_float4x4? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
