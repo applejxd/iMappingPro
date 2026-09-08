@@ -1,4 +1,4 @@
-#if canImport(SwiftUI)
+#if canImport(SwiftUI) && canImport(UIKit) && canImport(ARKit) && canImport(RealityKit)
 import SwiftUI
 import UIKit
 import ARKit
@@ -120,4 +120,4 @@ struct ARContainerView: UIViewRepresentable {
     ARContainerView(arSession: ARSession())
 }
 
-#endif // canImport(SwiftUI)
+#endif // canImport(SwiftUI) && canImport(UIKit) && canImport(ARKit) && canImport(RealityKit)
