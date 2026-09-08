@@ -41,11 +41,10 @@ struct ARContainerView: UIViewRepresentable {
     }
 
     private func updateMeshVisibility(_ arView: ARView, show: Bool) {
-        if show {
-            arView.debugOptions = [.showSceneUnderstanding]
-        } else {
-            arView.debugOptions = []
-        }
+        // debugOptions への代入はシーン理解の描画設定を作り直すため、変化時のみ行う
+        let options: ARView.DebugOptions = show ? [.showSceneUnderstanding] : []
+        guard arView.debugOptions != options else { return }
+        arView.debugOptions = options
     }
 
     private func updateOriginAxes(_ arView: ARView, coordinator: Coordinator) {

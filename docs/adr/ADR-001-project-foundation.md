@@ -16,7 +16,7 @@ iPhone Pro の LiDAR を活用した RGBD+姿勢スキャンアプリを iOS 向
 ### 1. 開発言語・フレームワーク
 
 | 項目 | 決定 | 理由 |
-|---|---|---|
+| --- | --- | --- |
 | 言語 | Swift 5.9+ | Apple ファースト、型安全 |
 | UI フレームワーク | SwiftUI | モダン宣言型 UI、iOS 16+ ターゲット |
 | AR プレビュー | RealityKit (ARView) | LiDAR メッシュ表示のネイティブサポート |
@@ -39,10 +39,13 @@ iPhone Pro の LiDAR を活用した RGBD+姿勢スキャンアプリを iOS 向
 
 ```swift
 let configuration = ARWorldTrackingConfiguration()
-configuration.sceneReconstruction = .meshWithClassification
+configuration.sceneReconstruction = .mesh
 configuration.frameSemantics = [.sceneDepth, .smoothedSceneDepth]
-configuration.planeDetection = [.horizontal, .vertical]
 ```
+
+> パフォーマンス改善のため、当初検討していた `.meshWithClassification` と
+> `planeDetection` は無効化した。いずれも保存データ・UI で利用しておらず、
+> 毎フレームの推論・解析コストがフレーム落ちの原因になるため。
 
 ### 5. プロジェクト構造
 

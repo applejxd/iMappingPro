@@ -33,7 +33,7 @@ RGBD フレームと同期して記録・管理する。
 ### Views
 
 | ビュー | 役割 |
-|---|---|
+| --- | --- |
 | `ContentView` | TabView ルート (スキャン/履歴) |
 | `ScanView` | AR プレビュー + Start/Stop/Save/Reset |
 | `ARContainerView` | UIViewRepresentable で ARView をラップ・録画開始地点の座標軸を表示（計測中のみ・表示専用） |
@@ -45,14 +45,14 @@ RGBD フレームと同期して記録・管理する。
 ### ViewModels
 
 | VM | 役割 |
-|---|---|
+| --- | --- |
 | `ScanViewModel` | スキャン状態管理、フレームキャプチャ、保存トリガー |
 | `HistoryViewModel` | セッション一覧 CRUD、共有 |
 
 ### ARCore
 
 | クラス | 役割 |
-|---|---|
+| --- | --- |
 | `ARSessionManager` | ARSession ライフサイクル、相対姿勢計算 |
 | `DepthProcessor` | CVPixelBuffer → Data 変換、`_depth.bin` のデコード・可視化、キーフレーム選択 |
 | `MeshExporter` | ARMeshAnchor → 相対座標系メッシュ変換・Wavefront OBJ 書き出し |
@@ -68,7 +68,7 @@ RGBD フレームと同期して記録・管理する。
 ### Models
 
 | モデル | 役割 |
-|---|---|
+| --- | --- |
 | `ScanSession` | セッションメタデータ (Codable) |
 | `PoseFrame` | 1フレームの姿勢 + カメラパラメータ (Codable) |
 | `PosesContainer` | poses.json のルートオブジェクト |
@@ -79,17 +79,23 @@ RGBD フレームと同期して記録・管理する。
 ```
 Main Thread (UI)
   ├── ARSession (delegateQueue: main)
-  │     └── session(_:didUpdate:)
+  │     └── session(_:didUpdate:)   ※ 軽量処理のみ
   │           ├── キーフレーム判定 (DepthProcessor)
-  │           ├── ARFrame のバッファを Data へコピー
-  │           └── CapturedFrame を @MainActor へ引き渡し
+  │           └── ピクセルバッファ参照をエンコードキューへ引き渡し
   └── SwiftUI ビュー更新 (@MainActor)
 
+frame-processing queue (serial, userInitiated)
+  ├── JPEG / 深度バイナリ / 信頼度 PNG へのエンコード
+  └── CapturedFrame を @MainActor へ受信順で引き渡し
+
 Swift Concurrency Task (background)
-  ├── フレームデータ処理 (DepthProcessor)
   ├── JPEG/バイナリ書き込み (SessionStorage)
   └── poses.json 書き込み
 ```
+
+> エンコードはメインスレッドを塞がないよう専用キューで行い、同時実行数は 1 に制限する。
+> エンコードが間に合わない間はキーフレーム採用を見送るため、AR プレビューの
+> フレームレートを保ったまま自動的に間引かれる。
 
 ## データフロー
 
@@ -106,9 +112,12 @@ ARSessionManager
     ├─→ [discontinuity] → 姿勢の飛びとして破棄
     │
     └─→ [capture]
+          │ ※ エンコード中のフレームがある場合は見送り (自動間引き)
+          │
+          ▼ frame-processing queue
           │ DepthProcessor.colorToJPEGData()
           │ DepthProcessor.depthToBinary()
-          │ DepthProcessor.confidenceToData()
+          │ DepthProcessor.confidenceSummary()
           │
           ▼ CapturedFrame (値型・Data のみ)
     │ delegate callback (@MainActor)

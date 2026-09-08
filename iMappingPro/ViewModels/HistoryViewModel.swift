@@ -111,8 +111,16 @@ final class HistoryViewModel: ObservableObject {
 
     // MARK: - Load Frames
 
-    func loadFrames(for session: ScanSession) -> [PoseFrame] {
-        (try? storage.loadPoses(sessionID: session.id)) ?? []
+    /// 姿勢データを読み込む
+    ///
+    /// フレーム数が多いと JSON デコードだけで数百 ms かかるため、
+    /// メインアクターを塞がないようバックグラウンドで実行する。
+    func loadFrames(for session: ScanSession) async -> [PoseFrame] {
+        let storage = self.storage
+        let sessionID = session.id
+        return await Task.detached(priority: .userInitiated) {
+            (try? storage.loadPoses(sessionID: sessionID)) ?? []
+        }.value
     }
 
     // MARK: - Session Directory

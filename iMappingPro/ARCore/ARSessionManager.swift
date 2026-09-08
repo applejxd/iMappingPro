@@ -103,8 +103,30 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private(set) var missingDepthCount: Int = 0
 
     private let keyframeSelector = DepthProcessor()
-    /// `didCapture` 通知を受信順で直列化する
+    /// `didCapture` 通知を受信順で直列化する（`processingQueue` からのみ触る）
     private var pendingCaptureDeliveryTask: Task<Void, Never>?
+
+    /// 画像・深度のエンコードを行う直列キュー
+    ///
+    /// JPEG/PNG エンコードはフレームあたり数十 ms かかるため、
+    /// メインスレッド（`ARSessionDelegate` のコールバック先）で実行すると
+    /// AR プレビューの描画が詰まってカクつく。
+    private let processingQueue = DispatchQueue(
+        label: "com.imappingpro.arcore.frame-processing",
+        qos: .userInitiated
+    )
+    /// エンコード処理中のフレーム数（メインスレッドからのみ更新）
+    private var inFlightEncodeCount: Int = 0
+    /// 同時にエンコードするフレーム数の上限
+    ///
+    /// ARKit のピクセルバッファはプール由来で、保持している間は再利用されない。
+    /// 多重にエンコードするとカメラのフレーム供給が滞るため 1 に制限し、
+    /// エンコードが間に合わない間はキーフレーム採用を見送る（自動的に間引く）。
+    private static let maxInFlightEncodes = 1
+    /// 深度が取得できなかったフレーム数（`processingQueue` からのみ触る）
+    private var processingMissingDepthCount: Int = 0
+    /// キャプチャ世代。開始・リセットのたびに進め、前世代の遅延到達を捨てる
+    private var captureGeneration: Int = 0
 
     private let logger = Logger(subsystem: "com.imappingpro.arcore", category: "ARSessionManager")
 
@@ -133,9 +155,11 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         guard resetTracking || forceRestart || !isSessionRunning else { return }
 
         let configuration = ARWorldTrackingConfiguration()
-        configuration.sceneReconstruction = .meshWithClassification
+        // 分類（`.meshWithClassification`）は保存データで使わないうえ、
+        // チャンクごとに推論が走ってフレーム落ちの原因になるため要求しない。
+        configuration.sceneReconstruction = .mesh
         configuration.frameSemantics = [.sceneDepth, .smoothedSceneDepth]
-        configuration.planeDetection = [.horizontal, .vertical]
+        // 平面検出の結果も利用していないため無効のままにする（毎フレームの解析コストを避ける）
 
         arSession.delegate = self
         if resetTracking {
@@ -156,8 +180,17 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         nextFrameIndex = 0
         missingDepthCount = 0
         keyframeSelector.reset()
+        beginNewCaptureGeneration()
         captureRequiresReset = false
         isCapturing = true
+    }
+
+    /// キャプチャ世代を進め、エンコード中フレームの結果を破棄対象にする
+    private func beginNewCaptureGeneration() {
+        captureGeneration &+= 1
+        processingQueue.async { [weak self] in
+            self?.processingMissingDepthCount = 0
+        }
     }
 
     /// キャプチャを再開（初期姿勢は維持し、座標系の原点を変えない）。
@@ -172,6 +205,19 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// キャプチャを停止（セッションは維持）
     func stopCapture() {
         isCapturing = false
+    }
+
+    /// エンコード中フレームの引き渡しが完了するまで待つ
+    ///
+    /// エンコードは非同期のため、停止直後には未引き渡しのキーフレームが残り得る。
+    /// 保存前にこれを待つことで、最後のキーフレームの取りこぼしを防ぐ。
+    func flushPendingCaptures() async {
+        let pendingDelivery: Task<Void, Never>? = await withCheckedContinuation { continuation in
+            processingQueue.async { [weak self] in
+                continuation.resume(returning: self?.pendingCaptureDeliveryTask)
+            }
+        }
+        await pendingDelivery?.value
     }
 
     /// セッションを一時停止
@@ -189,6 +235,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         nextFrameIndex = 0
         missingDepthCount = 0
         keyframeSelector.reset()
+        beginNewCaptureGeneration()
         startSession(resetTracking: true)
     }
 
@@ -242,15 +289,14 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         let tracking = FrameTrackingQuality(frame.camera.trackingState)
         // 深度は平滑化済みを優先する（無効画素が少なく、低テクスチャ面でも穴が埋まりやすい）
         let sceneDepth = frame.smoothedSceneDepth ?? frame.sceneDepth
-        var validatedStartDepthData: Data?
 
         // 深度パイプラインが立ち上がり、トラッキングが正常になるまで採用を保留する。
         // ここを通過した最初のフレームで初期姿勢（原点）を確定させる。
+        // 判定は毎フレーム走るため、バッファのコピーは行わず利用可否だけを確認する。
         if isWaitingForValidStart {
             guard tracking.isReliable,
                   let depthMap = sceneDepth?.depthMap,
-                  let depthData = DepthProcessor.depthToBinary(pixelBuffer: depthMap) else { return }
-            validatedStartDepthData = depthData
+                  DepthProcessor.hasUsableDepth(pixelBuffer: depthMap) else { return }
             isWaitingForValidStart = false
         }
 
@@ -287,64 +333,83 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
             break
         }
 
+        // 直前のフレームのエンコードが終わるまでは採用を見送る。
+        // `updateLast` を更新しないため、次のフレームで再び採用判定される。
+        guard inFlightEncodeCount < Self.maxInFlightEncodes else { return }
+
         keyframeSelector.updateLast(translation: translation, quaternion: quaternion, timestamp: timestamp)
 
-        // ARFrame のバッファはこのコールバック内でのみ有効なため、ここで Data 化する
-        let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: frame.capturedImage) ?? Data()
-        let depthData = validatedStartDepthData
-            ?? sceneDepth.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0.depthMap) }
-        let confidenceData = sceneDepth.flatMap { depth -> Data? in
-            guard let confidenceMap = depth.confidenceMap else { return nil }
-            return DepthProcessor.confidenceToData(pixelBuffer: confidenceMap)
-        }
-        let confidenceMean = sceneDepth.flatMap { depth -> Float? in
-            guard let confidenceMap = depth.confidenceMap else { return nil }
-            return DepthProcessor.confidenceMean(pixelBuffer: confidenceMap)
-        }
-
-        if depthData == nil {
-            missingDepthCount += 1
-            logger.warning("深度マップを取得できませんでした (index: \(self.nextFrameIndex, privacy: .public))")
-        }
-
-        let depthSize: CGSize
-        if depthData != nil, let depthMap = sceneDepth?.depthMap {
-            depthSize = CGSize(
-                width: CVPixelBufferGetWidth(depthMap),
-                height: CVPixelBufferGetHeight(depthMap)
-            )
-        } else {
-            depthSize = .zero
-        }
-        let imageSize = CVImageBufferGetEncodedSize(frame.capturedImage)
-
-        let captured = CapturedFrame(
-            index: nextFrameIndex,
-            timestamp: timestamp,
-            translation: translation,
-            quaternion: quaternion,
-            intrinsics: frame.camera.intrinsics,
-            imageWidth: Int(imageSize.width),
-            imageHeight: Int(imageSize.height),
-            depthWidth: Int(depthSize.width),
-            depthHeight: Int(depthSize.height),
-            colorData: colorData,
-            depthData: depthData,
-            confidenceData: confidenceData,
-            quality: FrameQuality(
-                tracking: tracking,
-                depthValidRatio: depthData.flatMap { DepthProcessor.depthValidRatio(binary: $0) },
-                confidenceMean: confidenceMean
-            ),
-            missingDepthCount: missingDepthCount
-        )
+        // ARFrame 自体はコールバックを抜けると再利用されるが、CVPixelBuffer を保持している間は
+        // プールへ返却されない。ここでは参照の取得だけを行い、重いエンコードは
+        // バックグラウンドキューへ逃がしてメインスレッドを解放する。
+        let colorBuffer = frame.capturedImage
+        let depthBuffer = sceneDepth?.depthMap
+        let confidenceBuffer = sceneDepth?.confidenceMap
+        let intrinsics = frame.camera.intrinsics
+        let imageSize = CVImageBufferGetEncodedSize(colorBuffer)
+        let index = nextFrameIndex
+        let generation = captureGeneration
         nextFrameIndex += 1
+        inFlightEncodeCount += 1
 
         let delegate = delegate
-        let previousDeliveryTask = pendingCaptureDeliveryTask
-        pendingCaptureDeliveryTask = Task { @MainActor in
-            await previousDeliveryTask?.value
-            delegate?.sessionManager(self, didCapture: captured)
+        processingQueue.async { [weak self] in
+            guard let self else { return }
+            defer {
+                DispatchQueue.main.async {
+                    self.inFlightEncodeCount -= 1
+                }
+            }
+
+            let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: colorBuffer) ?? Data()
+            let depthData = depthBuffer.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0) }
+            let confidence = confidenceBuffer.map { DepthProcessor.confidenceSummary(pixelBuffer: $0) }
+
+            if depthData == nil {
+                self.processingMissingDepthCount += 1
+                self.logger.warning("深度マップを取得できませんでした (index: \(index, privacy: .public))")
+            }
+            let missingDepthCount = self.processingMissingDepthCount
+
+            let depthSize: CGSize
+            if depthData != nil, let depthBuffer {
+                depthSize = CGSize(
+                    width: CVPixelBufferGetWidth(depthBuffer),
+                    height: CVPixelBufferGetHeight(depthBuffer)
+                )
+            } else {
+                depthSize = .zero
+            }
+
+            let captured = CapturedFrame(
+                index: index,
+                timestamp: timestamp,
+                translation: translation,
+                quaternion: quaternion,
+                intrinsics: intrinsics,
+                imageWidth: Int(imageSize.width),
+                imageHeight: Int(imageSize.height),
+                depthWidth: Int(depthSize.width),
+                depthHeight: Int(depthSize.height),
+                colorData: colorData,
+                depthData: depthData,
+                confidenceData: confidence?.pngData,
+                quality: FrameQuality(
+                    tracking: tracking,
+                    depthValidRatio: depthData.flatMap { DepthProcessor.depthValidRatio(binary: $0) },
+                    confidenceMean: confidence?.mean
+                ),
+                missingDepthCount: missingDepthCount
+            )
+
+            let previousDeliveryTask = self.pendingCaptureDeliveryTask
+            self.pendingCaptureDeliveryTask = Task { @MainActor in
+                await previousDeliveryTask?.value
+                // 開始・リセットをまたいで到達したフレームは座標系が異なるため捨てる
+                guard self.captureGeneration == generation else { return }
+                self.missingDepthCount = missingDepthCount
+                delegate?.sessionManager(self, didCapture: captured)
+            }
         }
     }
 

@@ -66,6 +66,14 @@ final class ScanViewModel: ObservableObject {
     private var currentSessionID: UUID?
     private var timerTask: Task<Void, Never>?
     private var lastCapturedTranslation: SIMD3<Float> = .zero
+    /// 表示用に丸める前の経過時間（保存時の duration に使う）
+    private var preciseElapsedSeconds: Double = 0
+    /// 現在のスキャンのフレームを受け入れてよいか
+    ///
+    /// エンコードは非同期のため、一時停止・エラー停止の直後にもフレームが到着し得る。
+    /// `scanState` で弾くと最後のキーフレームを取りこぼすため、
+    /// リセットと保存確定のタイミングだけ受け入れを止める。
+    private var isAcceptingCaptures: Bool = false
 
     // MARK: - Init
 
@@ -92,6 +100,7 @@ final class ScanViewModel: ObservableObject {
         frameCount = 0
         missingDepthCount = 0
         elapsedSeconds = 0
+        preciseElapsedSeconds = 0
         lastCapturedTranslation = .zero
         savedSession = nil
         currentSessionID = nil
@@ -100,6 +109,7 @@ final class ScanViewModel: ObservableObject {
         // 直後のフレームの姿勢が不連続になるため、ここではキャプチャ開始のみ行う
         sessionManager.startSession()
         sessionManager.startCapture()
+        isAcceptingCaptures = true
         sessionStartTime = Date()
         scanState = .scanning
 
@@ -130,10 +140,12 @@ final class ScanViewModel: ObservableObject {
         // （停止前に 0 を代入すると、キャンセル済みタスクの最終書き込みで値が戻る）
         stopTimer()
         sessionManager.resetSession()
+        isAcceptingCaptures = false
         capturedRecords = []
         frameCount = 0
         missingDepthCount = 0
         elapsedSeconds = 0
+        preciseElapsedSeconds = 0
         totalDistance = 0
         lastCapturedTranslation = .zero
         sessionStartTime = nil
@@ -154,9 +166,19 @@ final class ScanViewModel: ObservableObject {
         isSaving = true
         scanState = .saving
 
+        Task { [weak self] in
+            guard let self else { return }
+            // エンコード中のキーフレームを取りこぼさないよう、引き渡し完了を待ってから確定する
+            await self.sessionManager.flushPendingCaptures()
+            self.isAcceptingCaptures = false
+            self.performSave(name: name)
+        }
+    }
+
+    private func performSave(name: String) {
         let sessionID = UUID()
         currentSessionID = sessionID
-        let duration = elapsedSeconds
+        let duration = preciseElapsedSeconds
         // MainActor への到着順が前後しても保存順が崩れないよう index で整列する
         let records = capturedRecords.sorted { $0.index < $1.index }
         let frames = Self.poseFrames(from: records)
@@ -229,6 +251,7 @@ final class ScanViewModel: ObservableObject {
                     self.frameCount = 0
                     self.missingDepthCount = 0
                     self.elapsedSeconds = 0
+                    self.preciseElapsedSeconds = 0
                     self.totalDistance = 0
                     self.lastCapturedTranslation = .zero
                     self.sessionStartTime = nil
@@ -250,7 +273,7 @@ final class ScanViewModel: ObservableObject {
         // 二重起動防止（複数タスクが elapsedSeconds を奪い合うのを防ぐ）
         stopTimer()
         let startTime = Date()
-        let baseElapsed = elapsedSeconds
+        let baseElapsed = preciseElapsedSeconds
         timerTask = Task { [weak self] in
             while !Task.isCancelled {
                 do {
@@ -261,7 +284,12 @@ final class ScanViewModel: ObservableObject {
                 }
                 guard !Task.isCancelled, let self else { break }
                 let elapsed = baseElapsed + Date().timeIntervalSince(startTime)
-                self.elapsedSeconds = elapsed
+                self.preciseElapsedSeconds = elapsed
+                // 表示は秒単位のため、秒が変わったときだけ発行して
+                // ビュー全体（AR プレビューを含む）の再評価を 1/10 に減らす
+                if Int(elapsed) != Int(self.elapsedSeconds) {
+                    self.elapsedSeconds = elapsed
+                }
             }
         }
     }
@@ -304,8 +332,8 @@ final class ScanViewModel: ObservableObject {
 extension ScanViewModel: ARSessionManagerDelegate {
 
     func sessionManager(_ manager: ARSessionManager, didCapture frame: CapturedFrame) {
-        // 停止・リセット・保存中に遅延到達したフレームは取り込まない
-        guard scanState == .scanning else { return }
+        // リセット後・保存確定後に遅延到達したフレームは取り込まない
+        guard isAcceptingCaptures else { return }
 
         capturedRecords.append(frame)
         frameCount = capturedRecords.count

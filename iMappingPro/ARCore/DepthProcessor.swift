@@ -4,6 +4,15 @@ import ARKit
 #if canImport(CoreVideo)
 import CoreVideo
 #endif
+#if canImport(CoreImage)
+import CoreImage
+#endif
+#if canImport(ImageIO)
+import ImageIO
+#endif
+#if canImport(Metal)
+import Metal
+#endif
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -16,6 +25,21 @@ import Foundation
 final class DepthProcessor {
 
     #if canImport(CoreVideo)
+    // MARK: - Shared Rendering Context
+
+    /// JPEG 変換で使い回す `CIContext`
+    ///
+    /// `CIContext` の生成は Metal パイプラインの構築を伴い数十 ms かかるため、
+    /// フレームごとに作るとキャプチャが詰まる。プロセス全体で 1 つを共有する。
+    private static let sharedCIContext: CIContext = {
+        #if canImport(Metal)
+        if let device = MTLCreateSystemDefaultDevice() {
+            return CIContext(mtlDevice: device, options: [.cacheIntermediates: false])
+        }
+        #endif
+        return CIContext(options: [.cacheIntermediates: false])
+    }()
+
     // MARK: - Depth Binary Format
 
     /// Float32 深度マップを独自バイナリ形式に変換する
@@ -45,10 +69,27 @@ final class DepthProcessor {
         )
     }
 
-    /// 信頼度マップを PNG 用 Data に変換する（UInt8 グレースケール）
-    static func confidenceToData(pixelBuffer: CVPixelBuffer) -> Data? {
+    /// 深度バッファをコピーせずに、`depthToBinary` で扱える内容かどうかだけを確認する
+    ///
+    /// キャプチャ開始待ちの判定は毎フレーム走るため、変換コストを掛けずに判定する。
+    static func hasUsableDepth(pixelBuffer: CVPixelBuffer) -> Bool {
+        isSupportedDepthPixelFormat(CVPixelBufferGetPixelFormatType(pixelBuffer))
+            && CVPixelBufferGetWidth(pixelBuffer) > 0
+            && CVPixelBufferGetHeight(pixelBuffer) > 0
+    }
+
+    /// 信頼度マップの PNG データと平均レベルをまとめた結果
+    struct ConfidenceSummary {
+        let pngData: Data?
+        let mean: Float?
+    }
+
+    /// 信頼度マップから PNG データと平均レベルを 1 回の走査で求める
+    ///
+    /// PNG 化と平均値算出で個別に全画素を走査すると無駄なので、まとめて処理する。
+    static func confidenceSummary(pixelBuffer: CVPixelBuffer) -> ConfidenceSummary {
         guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_OneComponent8 else {
-            return nil
+            return ConfidenceSummary(pngData: nil, mean: nil)
         }
 
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -57,22 +98,36 @@ final class DepthProcessor {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        guard width > 0, height > 0, bytesPerRow >= width else { return nil }
+        guard width > 0, height > 0, bytesPerRow >= width,
+              let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return ConfidenceSummary(pngData: nil, mean: nil)
+        }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else { return nil }
-
-        // UInt8 の各値をグレースケール値にマッピング（0=0, 1=127, 2=254）
+        // UInt8 の各値をグレースケール値にマッピング（0=0, 1=127, 2=254）しつつ合計を取る
+        var total = 0
         var pixels = [UInt8](repeating: 0, count: width * height)
-        for row in 0..<height {
-            let rowPtr = baseAddress.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
-            for column in 0..<width {
-                let level = min(Int(rowPtr[column]), 2)
-                pixels[row * width + column] = UInt8(level * 127)
+        pixels.withUnsafeMutableBufferPointer { destination in
+            guard let destinationBase = destination.baseAddress else { return }
+            for row in 0..<height {
+                let rowPtr = baseAddress.advanced(by: row * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+                let rowDestination = destinationBase.advanced(by: row * width)
+                for column in 0..<width {
+                    let level = min(Int(rowPtr[column]), 2)
+                    total += level
+                    rowDestination[column] = UInt8(level * 127)
+                }
             }
         }
 
-        // CGImage 経由で PNG Data を作成
-        return createGrayscalePNG(pixels: pixels, width: width, height: height)
+        return ConfidenceSummary(
+            pngData: createGrayscalePNG(pixels: pixels, width: width, height: height),
+            mean: Float(total) / Float(width * height)
+        )
+    }
+
+    /// 信頼度マップを PNG 用 Data に変換する（UInt8 グレースケール）
+    static func confidenceToData(pixelBuffer: CVPixelBuffer) -> Data? {
+        confidenceSummary(pixelBuffer: pixelBuffer).pngData
     }
 
     /// 信頼度マップの平均レベル (0...2) を求める
@@ -112,8 +167,7 @@ final class DepthProcessor {
         orientation: UIImage.Orientation = captureImageOrientation
     ) -> Data? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext(options: nil)
-        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+        guard let cgImage = sharedCIContext.createCGImage(ciImage, from: ciImage.extent) else { return nil }
         let uiImage = UIImage(cgImage: cgImage, scale: 1, orientation: orientation)
         return uiImage.jpegData(compressionQuality: quality)
     }
@@ -196,14 +250,14 @@ final class DepthProcessor {
         )
         guard !payloadOverflow, data.count >= headerSize + payloadSize else { return nil }
 
-        let validCount = data.withUnsafeBytes { raw in
+        let validCount = data.withUnsafeBytes { raw -> Int in
+            guard let base = raw.baseAddress else { return 0 }
+            var pointer = base.advanced(by: headerSize)
             var count = 0
-            for index in 0..<pixelCount {
-                let value = raw.loadUnaligned(
-                    fromByteOffset: headerSize + index * MemoryLayout<Float32>.size,
-                    as: Float32.self
-                )
+            for _ in 0..<pixelCount {
+                let value = pointer.loadUnaligned(as: Float32.self)
                 if value.isFinite && value > 0 { count += 1 }
+                pointer = pointer.advanced(by: MemoryLayout<Float32>.size)
             }
             return count
         }
@@ -230,13 +284,15 @@ final class DepthProcessor {
         let expectedBytes = width * height * MemoryLayout<Float32>.size
         guard data.count >= headerSize + expectedBytes else { return nil }
 
+        // 画素ごとに読み出すと Data の境界チェックが効いて遅いため、まとめてコピーする
         var values = [Float](repeating: 0, count: width * height)
         data.withUnsafeBytes { raw in
-            for i in 0..<(width * height) {
-                values[i] = raw.loadUnaligned(
-                    fromByteOffset: headerSize + i * MemoryLayout<Float32>.size,
-                    as: Float32.self
-                )
+            guard let base = raw.baseAddress else { return }
+            values.withUnsafeMutableBytes { destination in
+                destination.copyMemory(from: UnsafeRawBufferPointer(
+                    start: base.advanced(by: headerSize),
+                    count: expectedBytes
+                ))
             }
         }
         return DecodedDepthMap(width: width, height: height, values: values)
@@ -490,6 +546,30 @@ final class DepthProcessor {
         }
         guard success else { return nil }
         return ColorImage(width: width, height: height, rgba: pixels)
+    }
+
+    /// JPEG データを表示サイズに合わせて縮小しながらデコードする
+    ///
+    /// サムネイル表示でフル解像度（1920×1440 程度）のまま `UIImage` を生成すると、
+    /// デコードコストとメモリ使用量が大きくスクロールがカクつくため、
+    /// ImageIO で縮小済みの `CGImage` を直接作る。
+    static func thumbnailImage(data: Data, maxPixelSize: Int) -> UIImage? {
+        guard maxPixelSize > 0,
+              let source = CGImageSourceCreateWithData(data as CFData, [
+                  kCGImageSourceShouldCache: false
+              ] as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return UIImage(data: data)
+        }
+        return UIImage(cgImage: cgImage)
     }
 
     private static func createGrayscalePNG(pixels: [UInt8], width: Int, height: Int) -> Data? {

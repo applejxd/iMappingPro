@@ -235,7 +235,7 @@ struct SessionDetailView: View {
     private func loadFrames() {
         isLoadingFrames = true
         Task {
-            frames = viewModel.loadFrames(for: session)
+            frames = await viewModel.loadFrames(for: session)
             isLoadingFrames = false
         }
     }
@@ -366,7 +366,8 @@ struct FrameThumbnailView: View {
             guard let data = try? Data(contentsOf: url) else { return nil }
             switch mode {
             case .color:
-                return UIImage(data: data)
+                // 表示は 100×133pt なので、Retina 3x でも 400px あれば足りる
+                return DepthProcessor.thumbnailImage(data: data, maxPixelSize: 400)
             case .depth:
                 return DepthProcessor.depthPreviewImage(from: data)
             }
