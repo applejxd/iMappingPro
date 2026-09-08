@@ -121,12 +121,10 @@ struct ScanView: View {
                 .font(.caption)
 
             // メインコントロール
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 // Start / Stop / Resume
                 Button(action: primaryAction) {
-                    Label(primaryButtonTitle, systemImage: primaryButtonIcon)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
+                    controlLabel(primaryButtonTitle, systemImage: primaryButtonIcon)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(primaryButtonColor)
@@ -137,9 +135,7 @@ struct ScanView: View {
                     sessionName = "スキャン \(formattedDate)"
                     showingSaveAlert = true
                 } label: {
-                    Label("保存", systemImage: "square.and.arrow.down")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
+                    controlLabel("保存", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
@@ -149,9 +145,7 @@ struct ScanView: View {
                 Button {
                     showingResetAlert = true
                 } label: {
-                    Label("リセット", systemImage: "arrow.counterclockwise")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
+                    controlLabel("リセット", systemImage: "arrow.counterclockwise")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
@@ -183,6 +177,18 @@ struct ScanView: View {
     }
 
     // MARK: - Helpers
+
+    /// 操作ボタンのラベル
+    ///
+    /// 3 ボタンを横並びにすると 1 つあたりの幅が狭く、「リセット」のような
+    /// 4 文字のラベルが折り返されるため、1 行に固定して必要な分だけ縮小する。
+    private func controlLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(maxWidth: .infinity)
+    }
 
     private var trackingColor: Color {
         switch viewModel.trackingState {

@@ -23,7 +23,12 @@ struct ARContainerView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> ARView {
-        let arView = ARView(frame: .zero)
+        // ARView の自動セッション構成を切る。
+        // 既定 (true) では、シーンにアンカーを追加したときや描画オプションを変えたときに
+        // ARView が自身の構成で `session.run(_:)` を呼び直す。その結果、
+        // ワールド原点がリセットされて姿勢が不連続になり、`sceneDepth` などの
+        // frameSemantics も失われる。構成は ARSessionManager が一元管理する。
+        let arView = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         arView.session = arSession
         arView.renderOptions = [.disableDepthOfField, .disableMotionBlur]
         updateMeshVisibility(arView, show: showMesh)

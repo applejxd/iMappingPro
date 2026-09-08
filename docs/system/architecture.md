@@ -104,7 +104,7 @@ ARKit (ARFrame)
     │
     ▼ session(_:didUpdate:) [~30fps]
 ARSessionManager
-    │ 開始ゲート (tracking == normal かつ深度あり)
+    │ 開始ゲート (tracking == normal かつ深度あり + 0.5 秒の姿勢連続性)
     │ relativeTransform()
     │ DepthProcessor.evaluate()
     │

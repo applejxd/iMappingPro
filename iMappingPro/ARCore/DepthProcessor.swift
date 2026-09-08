@@ -368,6 +368,9 @@ final class DepthProcessor {
     /// 採用時のみ更新する `last*` とは別に保持する。
     private var previousObservation: (translation: SIMD3<Float>, quaternion: simd_quatf, timestamp: TimeInterval)?
 
+    /// 直近の `evaluate` で測定したフレーム間の姿勢変化（診断ログ用）
+    private(set) var lastMotionDelta: (translation: Float, rotation: Float, time: TimeInterval)?
+
     let minTranslationDistance: Float = 0.05  // 5cm
     let minRotationAngle: Float = 0.05        // ~3°
     let maxFrameInterval: TimeInterval = 1.0  // 最大1秒
@@ -411,6 +414,11 @@ final class DepthProcessor {
         return translationDelta <= translationLimit && rotationDelta <= rotationLimit
     }
 
+    /// 2 つのクォータニオン間の回転角 (rad)
+    static func rotationAngle(between q1: simd_quatf, and q2: simd_quatf) -> Float {
+        simd_angle(between: q1, and: q2)
+    }
+
     /// 現在のフレームをキーフレームとして採用すべきかを判定する
     ///
     /// - Parameters:
@@ -436,10 +444,14 @@ final class DepthProcessor {
 
         // 直前フレームとの姿勢差でワールド原点の飛びを検出する
         if let observation {
+            let translationDelta = simd_length(translation - observation.translation)
+            let rotationDelta = simd_angle(between: observation.quaternion, and: quaternion)
+            let timeDelta = timestamp - observation.timestamp
+            lastMotionDelta = (translationDelta, rotationDelta, timeDelta)
             guard Self.isPlausibleMotion(
-                translationDelta: simd_length(translation - observation.translation),
-                rotationDelta: simd_angle(between: observation.quaternion, and: quaternion),
-                timeDelta: timestamp - observation.timestamp
+                translationDelta: translationDelta,
+                rotationDelta: rotationDelta,
+                timeDelta: timeDelta
             ) else {
                 return .discontinuity
             }
@@ -590,6 +602,73 @@ final class DepthProcessor {
         }
     }
     #endif
+}
+
+// MARK: - StartStabilityGate
+
+/// 原点を確定する前に、姿勢が連続しているかを確認するゲート（ARKit 非依存）
+///
+/// ARKit はトラッキングが `.normal` になった直後でもワールド原点を調整することがあり、
+/// その瞬間のフレームを原点にすると、直後のフレームとの間に大きな飛びが生じて
+/// 不連続として検出されてしまう。一定時間フレーム間の姿勢が連続していることを
+/// 確認してから原点を確定することで、この誤検出を避ける。
+struct StartStabilityGate {
+
+    /// 原点確定に必要な連続時間
+    static let requiredStableDuration: TimeInterval = 0.5
+
+    private var previous: (translation: SIMD3<Float>, quaternion: simd_quatf, timestamp: TimeInterval)?
+    private var stableSince: TimeInterval?
+
+    init() {}
+
+    /// 最後に検出した不連続な姿勢変化（診断ログ用）
+    private(set) var lastRejectedDelta: (translation: Float, rotation: Float, time: TimeInterval)?
+
+    mutating func reset() {
+        previous = nil
+        stableSince = nil
+        lastRejectedDelta = nil
+    }
+
+    /// 1 フレーム分の姿勢を評価する
+    ///
+    /// - Returns: 原点として採用してよい（十分な時間、姿勢が連続している）か
+    mutating func evaluate(
+        translation: SIMD3<Float>,
+        quaternion: simd_quatf,
+        timestamp: TimeInterval
+    ) -> Bool {
+        // 診断値はフレームごとに更新する（同じ内容をログに出し続けないため）
+        lastRejectedDelta = nil
+        defer { previous = (translation, quaternion, timestamp) }
+
+        guard let previous else {
+            stableSince = timestamp
+            return false
+        }
+
+        let translationDelta = simd_length(translation - previous.translation)
+        let rotationDelta = DepthProcessor.rotationAngle(between: previous.quaternion, and: quaternion)
+        let timeDelta = timestamp - previous.timestamp
+
+        guard DepthProcessor.isPlausibleMotion(
+            translationDelta: translationDelta,
+            rotationDelta: rotationDelta,
+            timeDelta: timeDelta
+        ) else {
+            // 飛んだので測り直す（この瞬間を原点にすると不連続の原因になる）
+            lastRejectedDelta = (translationDelta, rotationDelta, timeDelta)
+            stableSince = timestamp
+            return false
+        }
+
+        guard let stableSince else {
+            self.stableSince = timestamp
+            return false
+        }
+        return timestamp - stableSince >= Self.requiredStableDuration
+    }
 }
 
 // MARK: - simd_quatf helpers

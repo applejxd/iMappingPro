@@ -103,6 +103,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private(set) var missingDepthCount: Int = 0
 
     private let keyframeSelector = DepthProcessor()
+    /// 原点確定前に姿勢の連続性を確認するゲート
+    private var startStabilityGate = StartStabilityGate()
     /// `didCapture` 通知を受信順で直列化する（`processingQueue` からのみ触る）
     private var pendingCaptureDeliveryTask: Task<Void, Never>?
 
@@ -180,6 +182,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         nextFrameIndex = 0
         missingDepthCount = 0
         keyframeSelector.reset()
+        startStabilityGate.reset()
         beginNewCaptureGeneration()
         captureRequiresReset = false
         isCapturing = true
@@ -235,6 +238,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         nextFrameIndex = 0
         missingDepthCount = 0
         keyframeSelector.reset()
+        startStabilityGate.reset()
         beginNewCaptureGeneration()
         startSession(resetTracking: true)
     }
@@ -291,12 +295,39 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         let sceneDepth = frame.smoothedSceneDepth ?? frame.sceneDepth
 
         // 深度パイプラインが立ち上がり、トラッキングが正常になるまで採用を保留する。
-        // ここを通過した最初のフレームで初期姿勢（原点）を確定させる。
+        // さらに、姿勢が一定時間連続していることを確認してから原点を確定する。
+        // ARKit は `.normal` 直後にワールド原点を調整することがあり、その瞬間を
+        // 原点にすると直後のフレームが不連続と判定されてしまうため。
         // 判定は毎フレーム走るため、バッファのコピーは行わず利用可否だけを確認する。
         if isWaitingForValidStart {
             guard tracking.isReliable,
                   let depthMap = sceneDepth?.depthMap,
-                  DepthProcessor.hasUsableDepth(pixelBuffer: depthMap) else { return }
+                  DepthProcessor.hasUsableDepth(pixelBuffer: depthMap) else {
+                startStabilityGate.reset()
+                return
+            }
+            let cameraTransform = frame.camera.transform
+            let worldTranslation = SIMD3<Float>(
+                cameraTransform.columns.3.x,
+                cameraTransform.columns.3.y,
+                cameraTransform.columns.3.z
+            )
+            guard startStabilityGate.evaluate(
+                translation: worldTranslation,
+                quaternion: simd_quaternion(cameraTransform),
+                timestamp: frame.timestamp
+            ) else {
+                if let rejected = startStabilityGate.lastRejectedDelta {
+                    logger.debug("""
+                        原点確定を待機中: 姿勢が飛びました \
+                        (dt: \(rejected.time, privacy: .public)s, \
+                        dpos: \(rejected.translation, privacy: .public)m, \
+                        drot: \(rejected.rotation, privacy: .public)rad)
+                        """)
+                }
+                return
+            }
+            startStabilityGate.reset()
             isWaitingForValidStart = false
         }
 
@@ -323,7 +354,14 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
             // ワールド原点が切り替わった可能性があるため、既存軌跡との混在を防ぐ。
             isCapturing = false
             captureRequiresReset = true
-            logger.warning("姿勢の不連続を検出したためキャプチャを停止しました (timestamp: \(timestamp, privacy: .public))")
+            let delta = keyframeSelector.lastMotionDelta
+            logger.warning("""
+                姿勢の不連続を検出したためキャプチャを停止しました \
+                (frames: \(self.nextFrameIndex, privacy: .public), \
+                dt: \(delta?.time ?? 0, privacy: .public)s, \
+                dpos: \(delta?.translation ?? 0, privacy: .public)m, \
+                drot: \(delta?.rotation ?? 0, privacy: .public)rad)
+                """)
             let delegate = delegate
             Task { @MainActor in
                 delegate?.sessionManager(self, didFailWithError: ARSessionError.discontinuityDuringCapture)
