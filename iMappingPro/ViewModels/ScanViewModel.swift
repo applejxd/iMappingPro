@@ -42,6 +42,18 @@ final class ScanViewModel: ObservableObject {
     /// AR プレビューに座標軸を表示するためだけに使い、保存データには含めない。
     @Published var originTransform: simd_float4x4?
 
+    /// AR プレビューに表示する座標軸の変換
+    ///
+    /// 計測中（スキャン中・一時停止中）のみ表示し、待機中や保存中は表示しない。
+    var displayedOriginTransform: simd_float4x4? {
+        switch scanState {
+        case .scanning, .paused:
+            return originTransform
+        case .idle, .saving:
+            return nil
+        }
+    }
+
     // MARK: - Dependencies
 
     let sessionManager = ARSessionManager()

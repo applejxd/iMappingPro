@@ -17,7 +17,7 @@ struct ScanView: View {
             ARContainerView(
                 arSession: viewModel.sessionManager.arSession,
                 showMesh: showMesh,
-                originTransform: viewModel.originTransform
+                originTransform: viewModel.displayedOriginTransform
             )
             .ignoresSafeArea()
 
