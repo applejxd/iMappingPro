@@ -36,7 +36,7 @@ RGBD フレームと同期して記録・管理する。
 |---|---|
 | `ContentView` | TabView ルート (スキャン/履歴) |
 | `ScanView` | AR プレビュー + Start/Stop/Save/Reset |
-| `ARContainerView` | UIViewRepresentable で ARView をラップ |
+| `ARContainerView` | UIViewRepresentable で ARView をラップ・録画開始地点の座標軸を表示（計測中のみ・表示専用） |
 | `HistoryView` | セッション一覧 (List + NavigationLink) |
 | `SessionDetailView` | フレームサムネイル + 軌跡グラフ |
 | `TrajectoryView` | Canvas で XZ 平面投影の軌跡描画 |

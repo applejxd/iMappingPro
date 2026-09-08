@@ -16,7 +16,8 @@ struct ScanView: View {
             // AR プレビュー（フルスクリーン）
             ARContainerView(
                 arSession: viewModel.sessionManager.arSession,
-                showMesh: showMesh
+                showMesh: showMesh,
+                originTransform: viewModel.displayedOriginTransform
             )
             .ignoresSafeArea()
 
