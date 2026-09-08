@@ -65,7 +65,10 @@ struct ARContainerView: UIViewRepresentable {
         private var placedTransform: simd_float4x4?
 
         func placeOriginAnchor(in arView: ARView, transform: simd_float4x4) {
-            if let anchor = originAnchor, placedTransform == transform, anchor.scene != nil {
+            if let anchor = originAnchor,
+               let placedTransform,
+               placedTransform == transform,
+               anchor.scene != nil {
                 return
             }
             removeOriginAnchor(from: arView)
