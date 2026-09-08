@@ -16,7 +16,8 @@ struct ScanView: View {
             // AR プレビュー（フルスクリーン）
             ARContainerView(
                 arSession: viewModel.sessionManager.arSession,
-                showMesh: showMesh,
+                showMesh: showMesh && viewModel.isMeshPreviewAvailable,
+                showCoaching: viewModel.isCoachingActive,
                 originTransform: viewModel.displayedOriginTransform
             )
             .ignoresSafeArea()
@@ -26,6 +27,10 @@ struct ScanView: View {
                 statusOverlay
                 Spacer()
                 controlPanel
+            }
+
+            if let countdown = viewModel.countdown {
+                countdownOverlay(countdown)
             }
         }
         .onAppear {
@@ -69,45 +74,80 @@ struct ScanView: View {
     // MARK: - Status Overlay
 
     private var statusOverlay: some View {
-        HStack(spacing: 12) {
-            // トラッキング状態
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(trackingColor)
-                    .frame(width: 10, height: 10)
-                Text(viewModel.trackingState.displayText)
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                // トラッキング状態
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(trackingColor)
+                        .frame(width: 10, height: 10)
+                    Text(viewModel.trackingState.displayText)
+                        .font(.caption)
+                        .foregroundColor(.white)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: Capsule())
+
+                Spacer()
+
+                // フレーム数・距離・時間
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("\(viewModel.frameCount) frames")
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.white)
+                    Text(String(format: "%.2f m", viewModel.totalDistance))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.white)
+                    Text(formattedElapsed)
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.white)
+                    if viewModel.missingDepthCount > 0 {
+                        Text("深度欠落 \(viewModel.missingDepthCount)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundColor(.yellow)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            if let notice = viewModel.notice {
+                Label(notice, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .transition(.opacity)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: Capsule())
-
-            Spacer()
-
-            // フレーム数・距離・時間
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(viewModel.frameCount) frames")
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.white)
-                Text(String(format: "%.2f m", viewModel.totalDistance))
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.white)
-                Text(formattedElapsed)
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.white)
-                if viewModel.missingDepthCount > 0 {
-                    Text("深度欠落 \(viewModel.missingDepthCount)")
-                        .font(.caption.monospacedDigit())
-                        .foregroundColor(.yellow)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
+        .animation(.easeInOut(duration: 0.2), value: viewModel.notice)
         .padding(.horizontal, 16)
         .padding(.top, 16)
+    }
+
+    // MARK: - Countdown Overlay
+
+    /// 開始前カウントダウン
+    ///
+    /// ARKit のトラッキングが収束するまでの時間を稼ぐと同時に、
+    /// 「いつ記録が始まるか」をユーザに伝える。
+    private func countdownOverlay(_ value: Int) -> some View {
+        VStack(spacing: 12) {
+            Text("\(value)")
+                .font(.system(size: 96, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundColor(.white)
+                .contentTransition(.numericText())
+            Text("端末をゆっくり動かして構えてください")
+                .font(.subheadline)
+                .foregroundColor(.white)
+        }
+        .padding(32)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.2), value: value)
     }
 
     // MARK: - Control Panel
@@ -149,7 +189,9 @@ struct ScanView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
-                .disabled(viewModel.scanState == .idle || viewModel.scanState == .saving)
+                .disabled(viewModel.scanState == .idle
+                          || viewModel.scanState == .preparing
+                          || viewModel.scanState == .saving)
             }
         }
         .padding(16)
@@ -200,37 +242,41 @@ struct ScanView: View {
 
     private var primaryButtonTitle: String {
         switch viewModel.scanState {
-        case .idle:     return "開始"
-        case .scanning: return "停止"
-        case .paused:   return "再開"
-        case .saving:   return "保存中"
+        case .idle:      return "開始"
+        case .preparing: return "中止"
+        case .scanning:  return "停止"
+        case .paused:    return "再開"
+        case .saving:    return "保存中"
         }
     }
 
     private var primaryButtonIcon: String {
         switch viewModel.scanState {
-        case .idle:     return "record.circle"
-        case .scanning: return "pause.circle"
-        case .paused:   return "play.circle"
-        case .saving:   return "hourglass"
+        case .idle:      return "record.circle"
+        case .preparing: return "xmark.circle"
+        case .scanning:  return "pause.circle"
+        case .paused:    return "play.circle"
+        case .saving:    return "hourglass"
         }
     }
 
     private var primaryButtonColor: Color {
         switch viewModel.scanState {
-        case .idle:     return .blue
-        case .scanning: return .orange
-        case .paused:   return .blue
-        case .saving:   return .gray
+        case .idle:      return .blue
+        case .preparing: return .gray
+        case .scanning:  return .orange
+        case .paused:    return .blue
+        case .saving:    return .gray
         }
     }
 
     private func primaryAction() {
         switch viewModel.scanState {
-        case .idle:     viewModel.startScanning()
-        case .scanning: viewModel.stopScanning()
-        case .paused:   viewModel.resumeScanning()
-        case .saving:   break
+        case .idle:      viewModel.startScanning()
+        case .preparing: viewModel.cancelPreparing()
+        case .scanning:  viewModel.stopScanning()
+        case .paused:    viewModel.resumeScanning()
+        case .saving:    break
         }
     }
 

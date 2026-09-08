@@ -73,6 +73,10 @@ protocol ARSessionManagerDelegate: AnyObject {
     func sessionManager(_ manager: ARSessionManager, didCapture frame: CapturedFrame)
     /// 録画開始地点（相対座標系の原点）のワールド変換が確定・破棄されたときに通知する
     func sessionManager(_ manager: ARSessionManager, originDidChange transform: simd_float4x4?)
+    /// 原点確定直後の姿勢の飛びから自動復帰したことを通知する
+    ///
+    /// それまでに引き渡したフレームは別の座標系のものになるため、受け手は破棄する必要がある。
+    func sessionManagerDidRestartOrigin(_ manager: ARSessionManager)
     func sessionManager(_ manager: ARSessionManager, trackingStateChanged state: TrackingState)
     func sessionManager(_ manager: ARSessionManager, didFailWithError error: Error)
 }
@@ -105,6 +109,14 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private let keyframeSelector = DepthProcessor()
     /// 原点確定前に姿勢の連続性を確認するゲート
     private var startStabilityGate = StartStabilityGate()
+    /// この枚数までのキーフレームしか無い間の不連続は、原点を取り直して自動復帰する
+    ///
+    /// 記録開始直後は捨てても損失が小さく、ARKit の原点調整が原因のことが多いため、
+    /// エラーでキャプチャを止めるよりやり直した方が実用的。
+    private static let earlyRecoveryFrameLimit = 30
+    /// 1 回のキャプチャで自動復帰を許す回数
+    private static let maxEarlyRecoveryCount = 3
+    private var earlyRecoveryCount = 0
     /// `didCapture` 通知を受信順で直列化する（`processingQueue` からのみ触る）
     private var pendingCaptureDeliveryTask: Task<Void, Never>?
 
@@ -185,6 +197,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         startStabilityGate.reset()
         beginNewCaptureGeneration()
         captureRequiresReset = false
+        earlyRecoveryCount = 0
         isCapturing = true
     }
 
@@ -193,6 +206,25 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         captureGeneration &+= 1
         processingQueue.async { [weak self] in
             self?.processingMissingDepthCount = 0
+        }
+    }
+
+    /// 原点を取り直してキャプチャを続行する
+    ///
+    /// 既に引き渡したフレームは別の座標系になるため、世代を進めて無効化し、
+    /// デリゲートへ破棄を依頼する。
+    private func restartOrigin() {
+        initialTransform = nil
+        notifyOriginChanged(nil)
+        isWaitingForValidStart = true
+        nextFrameIndex = 0
+        missingDepthCount = 0
+        keyframeSelector.reset()
+        startStabilityGate.reset()
+        beginNewCaptureGeneration()
+        let delegate = delegate
+        Task { @MainActor in
+            delegate?.sessionManagerDidRestartOrigin(self)
         }
     }
 
@@ -351,10 +383,26 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         case .skip:
             return
         case .discontinuity:
+            let delta = keyframeSelector.lastMotionDelta
+            if nextFrameIndex <= Self.earlyRecoveryFrameLimit,
+               earlyRecoveryCount < Self.maxEarlyRecoveryCount {
+                // 記録開始直後の飛びは ARKit 側の原点調整であることが多い。
+                // 破棄しても損失が小さいので、エラーにせず原点を取り直す。
+                earlyRecoveryCount += 1
+                logger.warning("""
+                    記録開始直後に姿勢の不連続を検出したため原点を取り直します \
+                    (attempt: \(self.earlyRecoveryCount, privacy: .public), \
+                    frames: \(self.nextFrameIndex, privacy: .public), \
+                    dt: \(delta?.time ?? 0, privacy: .public)s, \
+                    dpos: \(delta?.translation ?? 0, privacy: .public)m, \
+                    drot: \(delta?.rotation ?? 0, privacy: .public)rad)
+                    """)
+                restartOrigin()
+                return
+            }
             // ワールド原点が切り替わった可能性があるため、既存軌跡との混在を防ぐ。
             isCapturing = false
             captureRequiresReset = true
-            let delta = keyframeSelector.lastMotionDelta
             logger.warning("""
                 姿勢の不連続を検出したためキャプチャを停止しました \
                 (frames: \(self.nextFrameIndex, privacy: .public), \
@@ -452,20 +500,32 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
-        let state: TrackingState
-        switch camera.trackingState {
-        case .normal:
-            state = .normal
-        case .notAvailable:
-            state = .notAvailable
-        case .limited(let reason):
-            state = .limited(reason)
-        @unknown default:
-            state = .notAvailable
-        }
+        let state = Self.trackingState(from: camera.trackingState)
         let delegate = delegate
         Task { @MainActor in
             delegate?.sessionManager(self, trackingStateChanged: state)
+        }
+    }
+
+    /// 現在のトラッキング状態
+    ///
+    /// `cameraDidChangeTrackingState` は変化時にしか呼ばれないため、
+    /// 画面復帰などで通知を取りこぼした場合の同期用に参照する。
+    var currentTrackingState: TrackingState {
+        guard let camera = arSession.currentFrame?.camera else { return .notAvailable }
+        return Self.trackingState(from: camera.trackingState)
+    }
+
+    private static func trackingState(from state: ARCamera.TrackingState) -> TrackingState {
+        switch state {
+        case .normal:
+            return .normal
+        case .notAvailable:
+            return .notAvailable
+        case .limited(let reason):
+            return .limited(reason)
+        @unknown default:
+            return .notAvailable
         }
     }
 

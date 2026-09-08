@@ -12,6 +12,8 @@ struct ARContainerView: UIViewRepresentable {
 
     let arSession: ARSession
     var showMesh: Bool = true
+    /// トラッキング初期化ガイド（標準の coaching overlay）を表示するか
+    var showCoaching: Bool = false
     /// 録画開始地点（相対座標系の原点）のワールド変換
     ///
     /// 表示専用の座標軸を配置するためだけに使う。RealityKit のエンティティは
@@ -31,18 +33,25 @@ struct ARContainerView: UIViewRepresentable {
         let arView = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         arView.session = arSession
         arView.renderOptions = [.disableDepthOfField, .disableMotionBlur]
+        context.coordinator.installCoachingOverlay(on: arView, session: arSession)
         updateMeshVisibility(arView, show: showMesh)
+        updateCoaching(context.coordinator)
         updateOriginAxes(arView, coordinator: context.coordinator)
         return arView
     }
 
     func updateUIView(_ arView: ARView, context: Context) {
         updateMeshVisibility(arView, show: showMesh)
+        updateCoaching(context.coordinator)
         updateOriginAxes(arView, coordinator: context.coordinator)
     }
 
     static func dismantleUIView(_ arView: ARView, coordinator: Coordinator) {
         coordinator.removeOriginAnchor(from: arView)
+    }
+
+    private func updateCoaching(_ coordinator: Coordinator) {
+        coordinator.setCoachingActive(showCoaching)
     }
 
     private func updateMeshVisibility(_ arView: ARView, show: Bool) {
@@ -67,6 +76,35 @@ struct ARContainerView: UIViewRepresentable {
 
         private var originAnchor: AnchorEntity?
         private var placedTransform: simd_float4x4?
+        private var coachingOverlay: ARCoachingOverlayView?
+        private var isCoachingActive = false
+
+        /// 標準のトラッキング初期化ガイドを重ねる
+        ///
+        /// 自動表示 (`activatesAutomatically`) は計測中にも割り込むため使わず、
+        /// 開始準備中だけ明示的に表示する。
+        func installCoachingOverlay(on arView: ARView, session: ARSession) {
+            guard coachingOverlay == nil else { return }
+            let overlay = ARCoachingOverlayView()
+            overlay.session = session
+            overlay.goal = .tracking
+            overlay.activatesAutomatically = false
+            overlay.translatesAutoresizingMaskIntoConstraints = false
+            arView.addSubview(overlay)
+            NSLayoutConstraint.activate([
+                overlay.leadingAnchor.constraint(equalTo: arView.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: arView.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: arView.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: arView.bottomAnchor)
+            ])
+            coachingOverlay = overlay
+        }
+
+        func setCoachingActive(_ active: Bool) {
+            guard isCoachingActive != active else { return }
+            isCoachingActive = active
+            coachingOverlay?.setActive(active, animated: true)
+        }
 
         func placeOriginAnchor(in arView: ARView, transform: simd_float4x4) {
             if let anchor = originAnchor,

@@ -97,6 +97,27 @@ Swift Concurrency Task (background)
 > エンコードが間に合わない間はキーフレーム採用を見送るため、AR プレビューの
 > フレームレートを保ったまま自動的に間引かれる。
 
+## 記録開始フロー
+
+ARKit はセッション開始直後にワールド原点を調整することがあり、その時点で記録を
+始めると「姿勢の不連続」として検出されてしまう。以下の 4 段構えで回避する。
+
+```
+[開始] タップ
+  │ ScanState = .preparing
+  ├─ トラッキングが normal になるまで ARCoachingOverlayView で案内
+  ├─ 3-2-1 カウントダウン（normal でない間はカウントを止めて測り直す）
+  ├─ StartStabilityGate: 0.5 秒ぶん姿勢が連続したフレームを原点に採用
+  └─ 記録開始 (ScanState = .scanning)
+        └─ 開始直後 (先頭 30 キーフレーム以内) の不連続は
+           エラーにせず原点を取り直す（最大 3 回・取得済みフレームは破棄）
+```
+
+- LiDAR メッシュのプレビュー (`.showSceneUnderstanding`) は計測中のみ有効にする
+  （初期化中は GPU 負荷でトラッキングの収束が遅れるため）
+- `ARView` は `automaticallyConfigureSession: false` で生成し、構成は
+  `ARSessionManager` だけが管理する
+
 ## データフロー
 
 ```
@@ -109,7 +130,7 @@ ARSessionManager
     │ DepthProcessor.evaluate()
     │
     ├─→ [skip]          → 次フレーム待機
-    ├─→ [discontinuity] → 姿勢の飛びとして破棄
+    ├─→ [discontinuity] → 開始直後なら原点を取り直し、以降は破棄してキャプチャ停止
     │
     └─→ [capture]
           │ ※ エンコード中のフレームがある場合は見送り (自動間引き)

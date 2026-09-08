@@ -12,6 +12,8 @@ import simd
 
 enum ScanState {
     case idle
+    /// 開始準備中（トラッキング安定待ち＋カウントダウン）
+    case preparing
     case scanning
     case paused
     case saving
@@ -41,6 +43,10 @@ final class ScanViewModel: ObservableObject {
     ///
     /// AR プレビューに座標軸を表示するためだけに使い、保存データには含めない。
     @Published var originTransform: simd_float4x4?
+    /// 開始前カウントダウンの残り秒数（準備中のみ非 nil）
+    @Published var countdown: Int?
+    /// 一時的な通知（原点の取り直しなど）
+    @Published var notice: String?
 
     /// AR プレビューに表示する座標軸の変換
     ///
@@ -49,9 +55,27 @@ final class ScanViewModel: ObservableObject {
         switch scanState {
         case .scanning, .paused:
             return originTransform
-        case .idle, .saving:
+        case .idle, .preparing, .saving:
             return nil
         }
+    }
+
+    /// LiDAR メッシュのプレビューを表示してよい状態か
+    ///
+    /// シーン理解の可視化は GPU 負荷が高く、トラッキング初期化中に有効にすると
+    /// 収束が遅れるため、計測中（スキャン中・一時停止中）だけ表示する。
+    var isMeshPreviewAvailable: Bool {
+        switch scanState {
+        case .scanning, .paused:
+            return true
+        case .idle, .preparing, .saving:
+            return false
+        }
+    }
+
+    /// トラッキング初期化ガイド（標準の coaching overlay）を表示するか
+    var isCoachingActive: Bool {
+        scanState == .preparing && !trackingState.isUsable
     }
 
     // MARK: - Dependencies
@@ -65,6 +89,8 @@ final class ScanViewModel: ObservableObject {
     private var sessionStartTime: Date?
     private var currentSessionID: UUID?
     private var timerTask: Task<Void, Never>?
+    private var countdownTask: Task<Void, Never>?
+    private var noticeTask: Task<Void, Never>?
     private var lastCapturedTranslation: SIMD3<Float> = .zero
     /// 表示用に丸める前の経過時間（保存時の duration に使う）
     private var preciseElapsedSeconds: Double = 0
@@ -74,6 +100,11 @@ final class ScanViewModel: ObservableObject {
     /// `scanState` で弾くと最後のキーフレームを取りこぼすため、
     /// リセットと保存確定のタイミングだけ受け入れを止める。
     private var isAcceptingCaptures: Bool = false
+
+    /// 開始前カウントダウンの秒数
+    ///
+    /// ARKit がワールド原点を確定させるまでの時間を稼ぐ目的も兼ねる。
+    static let countdownDuration: Int = 3
 
     // MARK: - Init
 
@@ -93,6 +124,11 @@ final class ScanViewModel: ObservableObject {
         sessionManager.startSession()
     }
 
+    /// スキャン開始を要求する
+    ///
+    /// トラッキングが安定するまで待ってからカウントダウンし、その後にキャプチャを開始する。
+    /// ARKit はセッション開始直後にワールド原点を調整することがあり、
+    /// すぐに記録を始めると姿勢の不連続として検出されてしまうため。
     func startScanning() {
         guard scanState == .idle else { return }
         capturedRecords = []
@@ -106,14 +142,68 @@ final class ScanViewModel: ObservableObject {
         currentSessionID = nil
 
         // 既にプレビューで実行中のセッションを再 run するとワールド原点がリセットされ、
-        // 直後のフレームの姿勢が不連続になるため、ここではキャプチャ開始のみ行う
+        // 直後のフレームの姿勢が不連続になるため、ここでは準備のみ行う
         sessionManager.startSession()
+        // デリゲート通知を取りこぼしている場合に備えて現在値を取り込む
+        trackingState = sessionManager.currentTrackingState
+        scanState = .preparing
+        startCountdown()
+    }
+
+    /// 準備中のカウントダウンを取り消して待機状態へ戻す
+    func cancelPreparing() {
+        guard scanState == .preparing else { return }
+        stopCountdown()
+        scanState = .idle
+    }
+
+    private func startCountdown() {
+        stopCountdown()
+        countdownTask = Task { [weak self] in
+            guard let self else { return }
+            var remaining = Self.countdownDuration
+            while remaining > 0 {
+                guard !Task.isCancelled, self.scanState == .preparing else { return }
+                guard self.trackingState.isUsable else {
+                    // トラッキングが安定するまでカウントを進めない（coaching overlay が案内する）
+                    self.countdown = nil
+                    remaining = Self.countdownDuration
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    continue
+                }
+                self.countdown = remaining
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                remaining -= 1
+            }
+            guard !Task.isCancelled, self.scanState == .preparing else { return }
+            self.countdown = nil
+            self.beginCapture()
+        }
+    }
+
+    private func stopCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        countdown = nil
+    }
+
+    private func beginCapture() {
         sessionManager.startCapture()
         isAcceptingCaptures = true
         sessionStartTime = Date()
         scanState = .scanning
-
         startTimer()
+    }
+
+    /// 一時的な通知を表示する（数秒後に自動で消える）
+    private func showNotice(_ message: String) {
+        notice = message
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
     }
 
     func stopScanning() {
@@ -139,6 +229,7 @@ final class ScanViewModel: ObservableObject {
         // 先にタイマーを止めてから値をリセットする
         // （停止前に 0 を代入すると、キャンセル済みタスクの最終書き込みで値が戻る）
         stopTimer()
+        stopCountdown()
         sessionManager.resetSession()
         isAcceptingCaptures = false
         capturedRecords = []
@@ -176,6 +267,14 @@ final class ScanViewModel: ObservableObject {
     }
 
     private func performSave(name: String) {
+        // 保存待ちの間に原点の取り直しでフレームが破棄されることがある
+        guard !capturedRecords.isEmpty else {
+            errorMessage = "保存できるフレームがありません。計測をやり直してください。"
+            isSaving = false
+            scanState = .paused
+            return
+        }
+
         let sessionID = UUID()
         currentSessionID = sessionID
         let duration = preciseElapsedSeconds
@@ -347,6 +446,23 @@ extension ScanViewModel: ARSessionManagerDelegate {
         originTransform = transform
     }
 
+    func sessionManagerDidRestartOrigin(_ manager: ARSessionManager) {
+        // 取り直し前のフレームは別座標系になるため、状態に関わらず必ず破棄する
+        // （通知はメインアクターへの非同期到達なので、その間に停止・保存へ遷移し得る）
+        capturedRecords = []
+        frameCount = 0
+        missingDepthCount = 0
+        totalDistance = 0
+        lastCapturedTranslation = .zero
+        elapsedSeconds = 0
+        preciseElapsedSeconds = 0
+
+        guard scanState == .scanning else { return }
+        sessionStartTime = Date()
+        startTimer()
+        showNotice("トラッキングが安定しなかったため、計測をやり直しました")
+    }
+
     func sessionManager(_ manager: ARSessionManager, trackingStateChanged state: TrackingState) {
         trackingState = state
     }
@@ -357,6 +473,10 @@ extension ScanViewModel: ARSessionManagerDelegate {
         if scanState == .scanning {
             stopTimer()
             scanState = .paused
+        } else if scanState == .preparing {
+            // 準備中に失敗したらカウントダウンを止めて待機状態に戻す
+            stopCountdown()
+            scanState = .idle
         }
     }
 }
