@@ -35,6 +35,7 @@ iMappingPro/
     │   └── PointCloudExporter.swift # 深度 + RGB → 色付き点群 (PLY)
     ├── Storage/                   # ファイル永続化
     │   └── SessionStorage.swift   # FileManager ラッパー
+    ├── Assets.xcassets/           # アプリアイコン (Xcode アプリターゲット専用)
     └── Info.plist                 # カメラ権限など
 ```
 

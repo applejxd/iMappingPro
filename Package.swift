@@ -21,6 +21,8 @@ let package = Package(
             exclude: [
                 "iMappingPro.xcodeproj",
                 "Info.plist",
+                // アプリアイコンは Xcode のアプリターゲット専用（SPM ライブラリでは使わない）
+                "Assets.xcassets",
             ]
         ),
         .testTarget(

@@ -26,6 +26,7 @@
 		B001001100000012 /* CoordinateSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001200000012 /* CoordinateSystem.swift */; };
 		B001001200000013 /* PointCloudExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001300000013 /* PointCloudExporter.swift */; };
 		B001001300000014 /* FrameQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001400000014 /* FrameQuality.swift */; };
+		B001001500000015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A001001500000015 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +51,7 @@
 		A001001300000013 /* PointCloudExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudExporter.swift; sourceTree = "<group>"; };
 		A001001400000014 /* FrameQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameQuality.swift; sourceTree = "<group>"; };
 		A001000F0000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A001001500000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +71,7 @@
 				A001000100000001 /* iMappingProApp.swift */,
 				A001000200000002 /* ContentView.swift */,
 				A001000F0000000F /* Info.plist */,
+				A001001500000015 /* Assets.xcassets */,
 				D0000002 /* Models */,
 				D0000003 /* ViewModels */,
 				D0000004 /* Views */,
@@ -205,6 +208,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B001001500000015 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -360,6 +364,7 @@
 		F0000005 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
@@ -384,6 +389,7 @@
 		F0000006 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
