@@ -105,6 +105,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private var nextFrameIndex: Int = 0
     /// 深度が取得できずスキップしたフレーム数
     private(set) var missingDepthCount: Int = 0
+    /// 深度が無いために採用を見送ったフレーム数（`sessionQueue` からのみ触る）
+    private var skippedNoDepthCount: Int = 0
 
     private let keyframeSelector = DepthProcessor()
     /// 原点確定前に姿勢の連続性を確認するゲート
@@ -119,6 +121,21 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     private var earlyRecoveryCount = 0
     /// `didCapture` 通知を受信順で直列化する（`processingQueue` からのみ触る）
     private var pendingCaptureDeliveryTask: Task<Void, Never>?
+
+    /// `ARSessionDelegate` のコールバックを受けるシリアルキュー
+    ///
+    /// `delegateQueue` を指定しないとデリゲートはメインキューで呼ばれる。
+    /// メインスレッドが詰まると保留中のコールバックが `ARFrame` を保持し続け、
+    /// ARKit がカメラ・深度の供給を止めてしまう
+    /// （"The delegate of ARSession is retaining N ARFrames" 警告 → `sceneDepth` が nil に
+    /// なり `_depth.bin` / `_conf.png` が欠落する）。専用キューで受けることで、
+    /// 保存時のメッシュ取得やアラート表示といったメインスレッドの混雑から切り離す。
+    ///
+    /// キャプチャ関連の可変状態はすべてこのキューに閉じ込める。
+    private let sessionQueue = DispatchQueue(
+        label: "com.imappingpro.arcore.session-delegate",
+        qos: .userInitiated
+    )
 
     /// 画像・深度のエンコードを行う直列キュー
     ///
@@ -158,6 +175,13 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// `forceRestart` を指定して、原点をリセットせずに再実行する。
     /// 両方を指定した場合は `resetTracking` を優先する。
     func startSession(resetTracking: Bool = false, forceRestart: Bool = false) {
+        sessionQueue.async { [weak self] in
+            self?.startSessionOnQueue(resetTracking: resetTracking, forceRestart: forceRestart)
+        }
+    }
+
+    /// `sessionQueue` 上でのみ呼ぶ `startSession` の実体
+    private func startSessionOnQueue(resetTracking: Bool, forceRestart: Bool) {
         guard Self.isLiDARSupported else {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -175,6 +199,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         configuration.frameSemantics = [.sceneDepth, .smoothedSceneDepth]
         // 平面検出の結果も利用していないため無効のままにする（毎フレームの解析コストを避ける）
 
+        // デリゲートをメインキューから外し、ARFrame の滞留を防ぐ
+        arSession.delegateQueue = sessionQueue
         arSession.delegate = self
         if resetTracking {
             arSession.run(configuration, options: [.resetTracking, .removeExistingAnchors])
@@ -188,17 +214,21 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     ///
     /// 実際の原点はトラッキングが正常かつ深度が得られる最初のフレームで確定する。
     func startCapture() {
-        initialTransform = nil
-        notifyOriginChanged(nil)
-        isWaitingForValidStart = true
-        nextFrameIndex = 0
-        missingDepthCount = 0
-        keyframeSelector.reset()
-        startStabilityGate.reset()
-        beginNewCaptureGeneration()
-        captureRequiresReset = false
-        earlyRecoveryCount = 0
-        isCapturing = true
+        // 呼び出し直後から採用判定が始まるよう同期的に確定させる
+        sessionQueue.sync {
+            initialTransform = nil
+            notifyOriginChanged(nil)
+            isWaitingForValidStart = true
+            nextFrameIndex = 0
+            missingDepthCount = 0
+            skippedNoDepthCount = 0
+            keyframeSelector.reset()
+            startStabilityGate.reset()
+            beginNewCaptureGeneration()
+            captureRequiresReset = false
+            earlyRecoveryCount = 0
+            isCapturing = true
+        }
     }
 
     /// キャプチャ世代を進め、エンコード中フレームの結果を破棄対象にする
@@ -219,6 +249,7 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         isWaitingForValidStart = true
         nextFrameIndex = 0
         missingDepthCount = 0
+        skippedNoDepthCount = 0
         keyframeSelector.reset()
         startStabilityGate.reset()
         beginNewCaptureGeneration()
@@ -231,15 +262,24 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     /// キャプチャを再開（初期姿勢は維持し、座標系の原点を変えない）。
     ///
     /// 座標系の整合性を失った後は `false` を返し、再開しない。
+    ///
+    /// 戻り値が必要なため `sessionQueue` へ同期的に入る。`sessionQueue` から
+    /// メインスレッドを同期的に待つ経路は無いため、デッドロックしない。
     func resumeCapture() -> Bool {
-        guard !captureRequiresReset else { return false }
-        isCapturing = true
-        return true
+        sessionQueue.sync {
+            guard !captureRequiresReset else { return false }
+            isCapturing = true
+            return true
+        }
     }
 
     /// キャプチャを停止（セッションは維持）
+    ///
+    /// 保存直前に呼ばれるため、戻った時点で確実に停止しているよう同期で行う。
     func stopCapture() {
-        isCapturing = false
+        sessionQueue.sync {
+            isCapturing = false
+        }
     }
 
     /// エンコード中フレームの引き渡しが完了するまで待つ
@@ -257,22 +297,29 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
 
     /// セッションを一時停止
     func pauseSession() {
-        arSession.pause()
-        isSessionRunning = false
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.arSession.pause()
+            self.isSessionRunning = false
+        }
     }
 
     /// セッションを完全リセット
     func resetSession() {
-        stopCapture()
-        initialTransform = nil
-        notifyOriginChanged(nil)
-        isWaitingForValidStart = false
-        nextFrameIndex = 0
-        missingDepthCount = 0
-        keyframeSelector.reset()
-        startStabilityGate.reset()
-        beginNewCaptureGeneration()
-        startSession(resetTracking: true)
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.isCapturing = false
+            self.initialTransform = nil
+            self.notifyOriginChanged(nil)
+            self.isWaitingForValidStart = false
+            self.nextFrameIndex = 0
+            self.missingDepthCount = 0
+            self.skippedNoDepthCount = 0
+            self.keyframeSelector.reset()
+            self.startStabilityGate.reset()
+            self.beginNewCaptureGeneration()
+            self.startSessionOnQueue(resetTracking: true, forceRestart: false)
+        }
     }
 
     // MARK: - Pose Calculation
@@ -293,7 +340,9 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     ///
     /// 表示専用の座標軸を配置するために使う。保存データには影響しない。
     var originWorldTransform: simd_float4x4? {
-        initialTransform.map { CoordinateSystem.referenceTransform(initial: $0) }
+        sessionQueue.sync {
+            initialTransform.map { CoordinateSystem.referenceTransform(initial: $0) }
+        }
     }
 
     private func notifyOriginChanged(_ transform: simd_float4x4?) {
@@ -306,10 +355,14 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
     // MARK: - Mesh Snapshot
 
     /// 現在のシーン再構成メッシュを、スキャン開始地点を原点とする相対座標系で取得する
+    ///
+    /// 頂点コピーは重いため `sessionQueue` の外（呼び出し元スレッド）で行い、
+    /// デリゲートのフレーム処理を止めないようにする。
     func snapshotMeshChunks() -> [MeshChunk] {
         guard #available(iOS 13.4, *), let frame = arSession.currentFrame else { return [] }
+        let initial = sessionQueue.sync { initialTransform }
         let reference = CoordinateSystem.referenceTransform(
-            initial: initialTransform ?? matrix_identity_float4x4
+            initial: initial ?? matrix_identity_float4x4
         )
         return frame.anchors.compactMap { anchor in
             guard let meshAnchor = anchor as? ARMeshAnchor else { return nil }
@@ -423,18 +476,37 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         // `updateLast` を更新しないため、次のフレームで再び採用判定される。
         guard inFlightEncodeCount < Self.maxInFlightEncodes else { return }
 
+        // 深度が取れないフレームは採用しない。
+        //
+        // ARKit は負荷が高いとき（"World tracking performance is being affected by
+        // resource constraints"）に深度の供給を落とすことがある。そのまま採用すると
+        // `_color.jpg` だけが増えて `_depth.bin` / `_conf.png` と対応が崩れるため、
+        // ここで見送る。`updateLast` を更新しないので、深度が戻り次第
+        // 次のフレームが採用され、キーフレーム間隔は保たれる。
+        guard let depthMap = sceneDepth?.depthMap,
+              DepthProcessor.hasUsableDepth(pixelBuffer: depthMap) else {
+            skippedNoDepthCount += 1
+            logger.warning("""
+                深度が無いためキーフレームを見送りました \
+                (frames: \(self.nextFrameIndex, privacy: .public), \
+                skipped: \(self.skippedNoDepthCount, privacy: .public))
+                """)
+            return
+        }
+
         keyframeSelector.updateLast(translation: translation, quaternion: quaternion, timestamp: timestamp)
 
         // ARFrame 自体はコールバックを抜けると再利用されるが、CVPixelBuffer を保持している間は
         // プールへ返却されない。ここでは参照の取得だけを行い、重いエンコードは
         // バックグラウンドキューへ逃がしてメインスレッドを解放する。
         let colorBuffer = frame.capturedImage
-        let depthBuffer = sceneDepth?.depthMap
+        let depthBuffer = depthMap
         let confidenceBuffer = sceneDepth?.confidenceMap
         let intrinsics = frame.camera.intrinsics
         let imageSize = CVImageBufferGetEncodedSize(colorBuffer)
         let index = nextFrameIndex
         let generation = captureGeneration
+        let noDepthSkips = skippedNoDepthCount
         nextFrameIndex += 1
         inFlightEncodeCount += 1
 
@@ -442,23 +514,26 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         processingQueue.async { [weak self] in
             guard let self else { return }
             defer {
-                DispatchQueue.main.async {
+                // `inFlightEncodeCount` はデリゲートと同じキューに閉じ込める
+                self.sessionQueue.async {
                     self.inFlightEncodeCount -= 1
                 }
             }
 
             let colorData = DepthProcessor.colorToJPEGData(pixelBuffer: colorBuffer) ?? Data()
-            let depthData = depthBuffer.flatMap { DepthProcessor.depthToBinary(pixelBuffer: $0) }
+            let depthData = DepthProcessor.depthToBinary(pixelBuffer: depthBuffer)
             let confidence = confidenceBuffer.map { DepthProcessor.confidenceSummary(pixelBuffer: $0) }
 
+            // 採用前に `hasUsableDepth` で確認済みなので通常ここには来ない。
+            // フォーマット変更などの想定外を検知するための保険。
             if depthData == nil {
                 self.processingMissingDepthCount += 1
-                self.logger.warning("深度マップを取得できませんでした (index: \(index, privacy: .public))")
+                self.logger.warning("深度マップの変換に失敗しました (index: \(index, privacy: .public))")
             }
-            let missingDepthCount = self.processingMissingDepthCount
+            let missingDepthCount = noDepthSkips + self.processingMissingDepthCount
 
             let depthSize: CGSize
-            if depthData != nil, let depthBuffer {
+            if depthData != nil {
                 depthSize = CGSize(
                     width: CVPixelBufferGetWidth(depthBuffer),
                     height: CVPixelBufferGetHeight(depthBuffer)
@@ -489,12 +564,22 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
             )
 
             let previousDeliveryTask = self.pendingCaptureDeliveryTask
-            self.pendingCaptureDeliveryTask = Task { @MainActor in
+            self.pendingCaptureDeliveryTask = Task { [weak self] in
                 await previousDeliveryTask?.value
-                // 開始・リセットをまたいで到達したフレームは座標系が異なるため捨てる
-                guard self.captureGeneration == generation else { return }
-                self.missingDepthCount = missingDepthCount
-                delegate?.sessionManager(self, didCapture: captured)
+                guard let self else { return }
+                // 世代の確認と累計の更新はデリゲートと同じキューで行う。
+                // このタスクは協調スレッドプール上で動くため、`sync` しても
+                // `sessionQueue` 自身を待つことはない。
+                let isCurrentGeneration = self.sessionQueue.sync { () -> Bool in
+                    // 開始・リセットをまたいで到達したフレームは座標系が異なるため捨てる
+                    guard self.captureGeneration == generation else { return false }
+                    self.missingDepthCount = missingDepthCount
+                    return true
+                }
+                guard isCurrentGeneration else { return }
+                await MainActor.run {
+                    delegate?.sessionManager(self, didCapture: captured)
+                }
             }
         }
     }
@@ -552,7 +637,8 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         guard isCapturing else {
             guard shouldRestartSession else { return }
             // プレビュー中は座標系を維持する必要がないため、セッションを再開する。
-            startSession(forceRestart: true)
+            // 既に `sessionQueue` 上なので実体を直接呼ぶ。
+            startSessionOnQueue(resetTracking: false, forceRestart: true)
             return
         }
 

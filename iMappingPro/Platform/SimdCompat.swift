@@ -1,5 +1,9 @@
 #if canImport(simd)
-import simd
+// Linux では以下の互換層が `iMappingProCore` の公開型として simd 型を提供する。
+// Apple プラットフォームでも同じように `@testable import iMappingProCore` だけで
+// simd 型を参照できるよう、本物の simd を再エクスポートして挙動を揃える。
+// これによりユニットテストを Linux CI と実機シミュレータの両方で実行できる。
+@_exported import simd
 #else
 
 // MARK: - Linux 用 simd 互換層

@@ -44,6 +44,7 @@ struct ScanView: View {
             }
             Button("キャンセル", role: .cancel) {
                 sessionName = ""
+                viewModel.cancelSavePrompt()
             }
         } message: {
             Text("このスキャンに名前を付けて保存します。")
@@ -173,6 +174,8 @@ struct ScanView: View {
                 // Save
                 Button {
                     sessionName = "スキャン \(formattedDate)"
+                    // 名前の入力中に姿勢が不連続と判定されないようキャプチャを止める
+                    viewModel.beginSavePrompt()
                     showingSaveAlert = true
                 } label: {
                     controlLabel("保存", systemImage: "square.and.arrow.down")

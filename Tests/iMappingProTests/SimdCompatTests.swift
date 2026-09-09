@@ -1,6 +1,12 @@
 import XCTest
 @testable import iMappingProCore
 
+// このファイルは Linux 用 simd 互換層（Platform/SimdCompat.swift）そのものの検証。
+// 互換層は `simd_float4x4()` を単位行列として定義しているが、Apple の実 simd は
+// ゼロ行列を返すなど意図的に異なる。Apple プラットフォームでは検証対象が存在しない
+// ため、互換層が使われる環境に限って実行する。
+#if !canImport(simd)
+
 final class SimdCompatTests: XCTestCase {
 
     // MARK: - simd_quatf
@@ -205,3 +211,5 @@ final class SimdCompatTests: XCTestCase {
         }
     }
 }
+
+#endif // !canImport(simd)

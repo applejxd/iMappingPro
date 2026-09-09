@@ -73,6 +73,21 @@ open iMappingPro/iMappingPro.xcodeproj
 
 ## テスト手順
 
+### ユニットテスト
+
+```bash
+# iOS シミュレータ (ローカル)
+xcodebuild test -scheme iMappingPro \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  -only-testing:iMappingProTests
+
+# Linux (CI と同じ環境)
+swift test
+```
+
+> macOS の `swift test` は ARKit が使えないため失敗します。ローカル検証は
+> 上記の iOS シミュレータ実行を使ってください。
+
 ### 動作確認 (v1.0)
 
 | # | 確認項目 | 期待動作 |
@@ -83,6 +98,8 @@ open iMappingPro/iMappingPro.xcodeproj
 | 2-b | 初期化の飛び | 記録開始直後にトラッキングが飛んだ場合は、エラーにせず「計測をやり直しました」と通知して原点を取り直す (最大 3 回) |
 | 3 | トラッキング状態 | 上部ラベルに「トラッキング正常」(緑) が表示される |
 | 4 | フレームカウント | デバイスを動かすとフレームカウンタが増加する |
+| 4-a | 深度欠落 | 保存後、`frames/` 内の `_color.jpg` と `_depth.bin` / `_conf.png` の枚数が一致する。Xcode コンソールに `The delegate of ARSession is retaining N ARFrames` が出ないこと (負荷時の `深度が無いためキーフレームを見送りました` は正常動作) |
+| 4-b | 保存中の計測停止 | 「保存」を押して名前入力ダイアログが出ている間はフレームカウンタと経過時間が止まる。「キャンセル」で計測が再開する |
 | 5 | 保存 | 名前を入力して保存できる |
 | 6 | 履歴確認 | 「履歴」タブに保存したセッションが表示される |
 | 7 | 詳細確認 | セッションをタップするとメッシュ 3D プレビュー・フレームサムネイル・軌跡グラフが表示される |

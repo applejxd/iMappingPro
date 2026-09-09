@@ -77,11 +77,13 @@ RGBD フレームと同期して記録・管理する。
 ## スレッドモデル
 
 ```
+session-delegate queue (serial, userInitiated)
+  └── ARSession (delegateQueue: session-delegate)
+        └── session(_:didUpdate:)   ※ 軽量処理のみ
+              ├── キーフレーム判定 (DepthProcessor)
+              └── ピクセルバッファ参照をエンコードキューへ引き渡し
+
 Main Thread (UI)
-  ├── ARSession (delegateQueue: main)
-  │     └── session(_:didUpdate:)   ※ 軽量処理のみ
-  │           ├── キーフレーム判定 (DepthProcessor)
-  │           └── ピクセルバッファ参照をエンコードキューへ引き渡し
   └── SwiftUI ビュー更新 (@MainActor)
 
 frame-processing queue (serial, userInitiated)
@@ -93,7 +95,15 @@ Swift Concurrency Task (background)
   └── poses.json 書き込み
 ```
 
-> エンコードはメインスレッドを塞がないよう専用キューで行い、同時実行数は 1 に制限する。
+> デリゲートは専用のシリアルキューで受ける。`delegateQueue` を指定しないと
+> コールバックはメインキューに積まれ、メインスレッドが詰まった際に保留中の
+> コールバックが `ARFrame` を保持し続ける。ARKit はこれを検知すると
+> （"The delegate of ARSession is retaining N ARFrames" 警告）カメラと深度の
+> 供給を止めるため、`sceneDepth` が nil になり `_depth.bin` / `_conf.png` が
+> 対で欠落する。キャプチャ関連の可変状態はすべてこのキューに閉じ込め、
+> 公開 API は用途に応じて `sync` / `async` でこのキューへ入る。
+
+> エンコードはデリゲートキューを塞がないよう専用キューで行い、同時実行数は 1 に制限する。
 > エンコードが間に合わない間はキーフレーム採用を見送るため、AR プレビューの
 > フレームレートを保ったまま自動的に間引かれる。
 
@@ -128,12 +138,15 @@ ARSessionManager
     │ 開始ゲート (tracking == normal かつ深度あり + 0.5 秒の姿勢連続性)
     │ relativeTransform()
     │ DepthProcessor.evaluate()
+    │   ※ 時刻が逆行・重複したフレーム (配送順の乱れ) は不連続にせず skip し、
+    │      判定基準 (previousObservation) も巻き戻さない
     │
     ├─→ [skip]          → 次フレーム待機
     ├─→ [discontinuity] → 開始直後なら原点を取り直し、以降は破棄してキャプチャ停止
     │
     └─→ [capture]
           │ ※ エンコード中のフレームがある場合は見送り (自動間引き)
+          │ ※ 深度が取れないフレームも見送る (color だけが増えるのを防ぐ)
           │
           ▼ frame-processing queue
           │ DepthProcessor.colorToJPEGData()
@@ -152,7 +165,8 @@ ScanViewModel.sessionManager(_:didCapture:)
           frameCount, totalDistance, missingDepthCount
 
 User → Save ボタン
-    │
+    │ ScanViewModel.beginSavePrompt()  (名前入力中はキャプチャを停止)
+    │   └─ キャンセル時は cancelSavePrompt() で再開
     ▼
 ScanViewModel.saveSession(name:)
     │ ScanViewModel.poseFrames(from:)  (index 整列・末尾フラグ付与)

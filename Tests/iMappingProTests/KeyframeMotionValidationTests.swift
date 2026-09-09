@@ -166,6 +166,64 @@ final class KeyframeMotionValidationTests: XCTestCase {
         )
     }
 
+    /// 配送順の乱れで時刻が逆行したフレームは、不連続ではなく見送りにする
+    ///
+    /// メインスレッドが詰まると ARKit は時刻の巻き戻ったフレームを配送することがある。
+    /// これを不連続と誤判定するとキャプチャが停止してしまう（実機ログ:
+    /// `dt: -0.066671s, dpos: 0.009579m, drot: 0.039542rad` で停止）。
+    func testEvaluateSkipsOutOfOrderFrameInsteadOfDiscontinuity() {
+        processor.updateLast(
+            translation: .zero,
+            quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            timestamp: 1.0
+        )
+
+        // 時刻が 66ms 巻き戻り、移動量は正常な範囲
+        XCTAssertEqual(
+            processor.evaluate(
+                translation: SIMD3<Float>(0.009579, 0, 0),
+                quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+                timestamp: 1.0 - 0.066671,
+                isFirst: false,
+                tracking: .normal
+            ),
+            .skip
+        )
+
+        // 逆行フレームで基準が巻き戻っていないので、後続の正常フレームは通常判定される
+        // （16.7ms で 6cm = 3.6m/s。速度上限 5m/s 内かつキーフレーム閾値 5cm 以上）
+        XCTAssertEqual(
+            processor.evaluate(
+                translation: SIMD3<Float>(0.06, 0, 0),
+                quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+                timestamp: 1.0167,
+                isFirst: false,
+                tracking: .normal
+            ),
+            .capture
+        )
+    }
+
+    /// 同一時刻の重複配送も不連続にしない
+    func testEvaluateSkipsDuplicateTimestampFrame() {
+        processor.updateLast(
+            translation: .zero,
+            quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+            timestamp: 1.0
+        )
+
+        XCTAssertEqual(
+            processor.evaluate(
+                translation: .zero,
+                quaternion: simd_quatf(ix: 0, iy: 0, iz: 0, r: 1),
+                timestamp: 1.0,
+                isFirst: false,
+                tracking: .normal
+            ),
+            .skip
+        )
+    }
+
     func testEvaluateCapturesNormalKeyframe() {
         processor.updateLast(
             translation: .zero,

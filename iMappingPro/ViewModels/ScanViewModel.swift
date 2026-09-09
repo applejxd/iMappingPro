@@ -101,6 +101,9 @@ final class ScanViewModel: ObservableObject {
     /// リセットと保存確定のタイミングだけ受け入れを止める。
     private var isAcceptingCaptures: Bool = false
 
+    /// 保存ダイアログを開いた時点で計測中だったか（キャンセル時に再開するため）
+    private var wasScanningBeforeSavePrompt: Bool = false
+
     /// 開始前カウントダウンの秒数
     ///
     /// ARKit がワールド原点を確定させるまでの時間を稼ぐ目的も兼ねる。
@@ -224,8 +227,35 @@ final class ScanViewModel: ObservableObject {
         startTimer()
     }
 
+    /// 保存ダイアログを開く直前に呼ぶ
+    ///
+    /// 名前を入力している間もキャプチャを続けると、その間の姿勢変化や ARKit の
+    /// トラッキング再初期化が「姿勢の不連続」として検出され、保存前にエラーで
+    /// 停止してしまう。ダイアログ表示中はキャプチャを止めておく。
+    func beginSavePrompt() {
+        guard scanState == .scanning else { return }
+        sessionManager.stopCapture()
+        stopTimer()
+        wasScanningBeforeSavePrompt = true
+    }
+
+    /// 保存ダイアログがキャンセルされたときに計測を元へ戻す
+    func cancelSavePrompt() {
+        guard wasScanningBeforeSavePrompt else { return }
+        wasScanningBeforeSavePrompt = false
+        guard scanState == .scanning else { return }
+        guard sessionManager.resumeCapture() else {
+            // ダイアログ表示中に座標系の整合性が失われた場合は一時停止として扱う
+            scanState = .paused
+            errorMessage = "座標系の整合性を確認できないため再開できません。ここまでの結果を保存するか、リセットして再スキャンしてください。"
+            return
+        }
+        startTimer()
+    }
+
     func resetScanning() {
         guard scanState != .saving else { return }
+        wasScanningBeforeSavePrompt = false
         // 先にタイマーを止めてから値をリセットする
         // （停止前に 0 を代入すると、キャンセル済みタスクの最終書き込みで値が戻る）
         stopTimer()
@@ -251,6 +281,7 @@ final class ScanViewModel: ObservableObject {
             errorMessage = "保存するフレームがありません。スキャンを開始してください。"
             return
         }
+        wasScanningBeforeSavePrompt = false
         // 保存中にフレームが増えると保存内容と表示がずれるため、キャプチャとタイマーを止める
         sessionManager.stopCapture()
         stopTimer()

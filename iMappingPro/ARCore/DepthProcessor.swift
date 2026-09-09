@@ -432,6 +432,20 @@ final class DepthProcessor {
         tracking: FrameTrackingQuality
     ) -> CaptureDecision {
         let observation = previousObservation
+
+        // デリゲートキューが詰まると ARKit は時刻の逆行したフレームを配送することがある。
+        // これは座標系の飛びではなく配送順の乱れなので、不連続にせず見送るだけにする。
+        // 基準を巻き戻すと後続フレームの時間差が水増しされるため、`previousObservation`
+        // は更新しない。
+        if let observation, timestamp <= observation.timestamp {
+            lastMotionDelta = (
+                simd_length(translation - observation.translation),
+                simd_angle(between: observation.quaternion, and: quaternion),
+                timestamp - observation.timestamp
+            )
+            return .skip
+        }
+
         // 破棄・見送りの場合も次フレームの判定基準になるため必ず更新する
         previousObservation = (translation, quaternion, timestamp)
 
