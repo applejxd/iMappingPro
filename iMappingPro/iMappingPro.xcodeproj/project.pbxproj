@@ -26,6 +26,8 @@
 		B001001100000012 /* CoordinateSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001200000012 /* CoordinateSystem.swift */; };
 		B001001200000013 /* PointCloudExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001300000013 /* PointCloudExporter.swift */; };
 		B001001300000014 /* FrameQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001400000014 /* FrameQuality.swift */; };
+		B001001600000016 /* IMUSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001600000016 /* IMUSample.swift */; };
+		B001001700000017 /* IMURecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A001001700000017 /* IMURecorder.swift */; };
 		B001001500000015 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A001001500000015 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -50,6 +52,8 @@
 		A001001200000012 /* CoordinateSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoordinateSystem.swift; sourceTree = "<group>"; };
 		A001001300000013 /* PointCloudExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointCloudExporter.swift; sourceTree = "<group>"; };
 		A001001400000014 /* FrameQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameQuality.swift; sourceTree = "<group>"; };
+		A001001600000016 /* IMUSample.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMUSample.swift; sourceTree = "<group>"; };
+		A001001700000017 /* IMURecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMURecorder.swift; sourceTree = "<group>"; };
 		A001000F0000000F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A001001500000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -88,6 +92,7 @@
 				A001000400000004 /* PoseFrame.swift */,
 				A001000500000005 /* PosesContainer.swift */,
 				A001001400000014 /* FrameQuality.swift */,
+				A001001600000016 /* IMUSample.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -117,6 +122,7 @@
 			isa = PBXGroup;
 			children = (
 				A001000600000006 /* ARSessionManager.swift */,
+				A001001700000017 /* IMURecorder.swift */,
 				A001000700000007 /* DepthProcessor.swift */,
 				A001001000000010 /* MeshExporter.swift */,
 				A001001200000012 /* CoordinateSystem.swift */,
@@ -225,7 +231,9 @@
 				B001000400000004 /* PoseFrame.swift in Sources */,
 				B001000500000005 /* PosesContainer.swift in Sources */,
 				B001001300000014 /* FrameQuality.swift in Sources */,
+				B001001600000016 /* IMUSample.swift in Sources */,
 				B001000600000006 /* ARSessionManager.swift in Sources */,
+				B001001700000017 /* IMURecorder.swift in Sources */,
 				B001000700000007 /* DepthProcessor.swift in Sources */,
 				B001000800000008 /* SessionStorage.swift in Sources */,
 				B001000900000009 /* ScanViewModel.swift in Sources */,

@@ -12,6 +12,7 @@ Documents/
             ├── poses.json         # 全フレームの6DOF姿勢
             ├── mesh.obj           # 統合メッシュ (Wavefront OBJ, LiDAR 取得時のみ)
             ├── points.ply         # 色付き点群 (PLY binary, 深度取得時のみ)
+            ├── imu.csv            # 加速度・ジャイロ生サンプル
             └── frames/
                 ├── 000000_color.jpg    # RGB フレーム (JPEG)
                 ├── 000000_depth.bin    # 深度マップ (Float32 binary)
@@ -168,6 +169,24 @@ color = Image.open(path)
 from PIL import ImageOps
 upright = ImageOps.exif_transpose(color)
 ```
+
+## imu.csv
+
+スキャン中に取得した CoreMotion の raw 加速度計・ジャイロサンプルを保存する。
+
+```csv
+sensor,timestamp,x,y,z
+accelerometer,12345.678901234,0.012000000,-0.034000000,0.998000000
+gyroscope,12345.679012345,0.001000000,0.002000000,-0.003000000
+```
+
+- `timestamp`: CoreMotion が各サンプルに付けた秒単位の単調増加時刻。コールバック到着時刻ではない。
+- `poses.json` の `timestamp` と同じシステム起動後の時刻基準を使用するため、後処理で RGBD フレームと同期できる。
+- 加速度の単位は g、ジャイロの単位は rad/s。2つのセンサーは独立したレートで記録される。
+- 200 Hz を要求するが、実際のサンプルレートはデバイスに依存する。欠落やジッターを含む可能性があるため各サンプルの timestamp を使う。
+- CSV は一時停止中のサンプルを含まず、再開後は同じセッションへ追記される。
+
+ARKit のワールドトラッキングはカメラを占有するため、別の `AVCaptureSession` / `AVCaptureVideoDataOutput` を同時に開始しない。映像は `ARFrame.capturedImage` から取得し、ARKit がサポートする固定ビデオフォーマットのうち 30 fps を優先して 1920×1080 に最も近いものを選ぶ（30 fps が無ければ 60 fps）。ARKit は露出・フォーカス・手ぶれ補正の個別ロックを公開していないため、これらは ARKit の自動制御に委ねる。
 
 ## _depth.bin
 
