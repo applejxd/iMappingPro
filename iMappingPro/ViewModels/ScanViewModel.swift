@@ -492,7 +492,7 @@ extension ScanViewModel: ARSessionManagerDelegate {
         // （通知はメインアクターへの非同期到達なので、その間に停止・保存へ遷移し得る）
         capturedRecords = []
         imuRecorder.resetRecording()
-        if scanState == .scanning {
+        if scanState == .scanning && !wasScanningBeforeSavePrompt {
             imuRecorder.beginRecording()
         }
         frameCount = 0

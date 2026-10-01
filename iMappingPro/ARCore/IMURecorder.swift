@@ -1,4 +1,4 @@
-#if canImport(CoreMotion)
+#if os(iOS) && canImport(CoreMotion)
 import CoreMotion
 import Foundation
 
