@@ -27,6 +27,14 @@ struct KeyFrameSelector {
 }
 ```
 
+### 1.1 VI SLAM カメラ設定と IMU 記録
+
+- ARKit がカメラを占有するため、映像は引き続き `ARFrame.capturedImage` から取得する。別の `AVCaptureSession` / `AVCaptureVideoDataOutput` は起動しない。
+- `ARWorldTrackingConfiguration.supportedVideoFormats` から 30 fps を優先し、1920×1080 に最も近い固定フォーマットを選択する。30 fps が利用できない場合は 60 fps を選ぶ。
+- ARKit は露出、フォーカス、手ぶれ補正のロックを公開していないため、カメラの自動制御は維持する。
+- CoreMotion の raw 加速度計・ジャイロを各 200 Hz で要求する。実サンプルレートはデバイス依存であり、コールバック到着時刻ではなく各サンプル固有の timestamp を保存する。
+- サンプルは `imu.csv` に保存し、`poses.json` の ARKit フレーム timestamp と同一のシステム時刻基準で後処理同期できるようにする。
+
 ### 2. データモデル
 
 #### PoseFrame
@@ -152,6 +160,7 @@ Background Queue (captureQueue: DispatchQueue):
 - [x] `ScanViewModel`: キーフレーム選択ロジック、相対姿勢計算
 - [x] `PoseFrame` / `ScanSession`: Codable データモデル
 - [x] バックグラウンドスレッドでの非同期書き込み
+- [x] 固定 ARKit ビデオフォーマット選択と CoreMotion 生 IMU 記録
 
 ### 検証基準
 

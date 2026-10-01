@@ -145,6 +145,11 @@ final class SessionStorage {
         try data.write(to: url, options: .atomic)
     }
 
+    func saveIMUSamples(_ samples: [IMUSample], sessionID: UUID) throws {
+        let url = sessionDirectoryURL(id: sessionID).appendingPathComponent("imu.csv")
+        try IMUSample.csvData(from: samples).write(to: url, options: .atomic)
+    }
+
     func loadPoses(sessionID: UUID) throws -> [PoseFrame] {
         let url = sessionDirectoryURL(id: sessionID).appendingPathComponent("poses.json")
         guard fileManager.fileExists(atPath: url.path) else { return [] }

@@ -213,6 +213,21 @@ final class SessionStorageTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
     }
 
+    func testSaveIMUSamples() throws {
+        try storage.prepareDirectories()
+        let sessionID = UUID()
+        _ = try storage.createSessionDirectory(id: sessionID)
+        let samples = [
+            IMUSample(sensor: .accelerometer, timestamp: 1.25, x: 0, y: 0, z: 1),
+        ]
+
+        try storage.saveIMUSamples(samples, sessionID: sessionID)
+
+        let url = storage.sessionDirectoryURL(id: sessionID).appendingPathComponent("imu.csv")
+        let csv = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(csv.contains("accelerometer,1.250000000,0.000000000,0.000000000,1.000000000"))
+    }
+
     func testColorImageURL() {
         let sessionID = UUID()
         let url = storage.colorImageURL(index: 42, sessionID: sessionID)

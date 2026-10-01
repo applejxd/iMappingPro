@@ -197,6 +197,9 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
         // チャンクごとに推論が走ってフレーム落ちの原因になるため要求しない。
         configuration.sceneReconstruction = .mesh
         configuration.frameSemantics = [.sceneDepth, .smoothedSceneDepth]
+        if let videoFormat = Self.fixedVideoFormat() {
+            configuration.videoFormat = videoFormat
+        }
         // 平面検出の結果も利用していないため無効のままにする（毎フレームの解析コストを避ける）
 
         // デリゲートをメインキューから外し、ARFrame の滞留を防ぐ
@@ -208,6 +211,25 @@ final class ARSessionManager: NSObject, ARSessionDelegate {
             arSession.run(configuration)
         }
         isSessionRunning = true
+    }
+
+    /// ARKit owns the camera during world tracking, so use its fixed format instead of
+    /// opening a competing AVCaptureSession. Prefer 1080p at 30 fps, then 60 fps.
+    private static func fixedVideoFormat() -> ARConfiguration.VideoFormat? {
+        let formats = ARWorldTrackingConfiguration.supportedVideoFormats
+        for frameRate in [30, 60] {
+            let candidates = formats.filter { $0.framesPerSecond == frameRate }
+            if let closest = candidates.min(by: { lhs, rhs in
+                let lhsResolution = lhs.imageResolution
+                let rhsResolution = rhs.imageResolution
+                let lhsDistance = abs(lhsResolution.width - 1920) + abs(lhsResolution.height - 1080)
+                let rhsDistance = abs(rhsResolution.width - 1920) + abs(rhsResolution.height - 1080)
+                return lhsDistance < rhsDistance
+            }) {
+                return closest
+            }
+        }
+        return nil
     }
 
     /// キャプチャを開始（初期姿勢をリセット）

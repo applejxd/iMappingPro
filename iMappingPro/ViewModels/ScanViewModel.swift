@@ -82,6 +82,7 @@ final class ScanViewModel: ObservableObject {
 
     let sessionManager = ARSessionManager()
     private let storage = SessionStorage()
+    private let imuRecorder = IMURecorder()
 
     // MARK: - Private
 
@@ -192,6 +193,7 @@ final class ScanViewModel: ObservableObject {
 
     private func beginCapture() {
         sessionManager.startCapture()
+        imuRecorder.beginRecording()
         isAcceptingCaptures = true
         sessionStartTime = Date()
         scanState = .scanning
@@ -212,6 +214,7 @@ final class ScanViewModel: ObservableObject {
     func stopScanning() {
         guard scanState == .scanning else { return }
         sessionManager.stopCapture()
+        imuRecorder.pauseRecording()
         stopTimer()
         scanState = .paused
     }
@@ -223,6 +226,7 @@ final class ScanViewModel: ObservableObject {
             errorMessage = "座標系の整合性を確認できないため再開できません。ここまでの結果を保存するか、リセットして再スキャンしてください。"
             return
         }
+        imuRecorder.resumeRecording()
         scanState = .scanning
         startTimer()
     }
@@ -235,6 +239,7 @@ final class ScanViewModel: ObservableObject {
     func beginSavePrompt() {
         guard scanState == .scanning else { return }
         sessionManager.stopCapture()
+        imuRecorder.pauseRecording()
         stopTimer()
         wasScanningBeforeSavePrompt = true
     }
@@ -250,6 +255,7 @@ final class ScanViewModel: ObservableObject {
             errorMessage = "座標系の整合性を確認できないため再開できません。ここまでの結果を保存するか、リセットして再スキャンしてください。"
             return
         }
+        imuRecorder.resumeRecording()
         startTimer()
     }
 
@@ -261,6 +267,7 @@ final class ScanViewModel: ObservableObject {
         stopTimer()
         stopCountdown()
         sessionManager.resetSession()
+        imuRecorder.resetRecording()
         isAcceptingCaptures = false
         capturedRecords = []
         frameCount = 0
@@ -292,12 +299,13 @@ final class ScanViewModel: ObservableObject {
             guard let self else { return }
             // エンコード中のキーフレームを取りこぼさないよう、引き渡し完了を待ってから確定する
             await self.sessionManager.flushPendingCaptures()
+            let imuSamples = self.imuRecorder.finishRecording()
             self.isAcceptingCaptures = false
-            self.performSave(name: name)
+            self.performSave(name: name, imuSamples: imuSamples)
         }
     }
 
-    private func performSave(name: String) {
+    private func performSave(name: String, imuSamples: [IMUSample]) {
         // 保存待ちの間に原点の取り直しでフレームが破棄されることがある
         guard !capturedRecords.isEmpty else {
             errorMessage = "保存できるフレームがありません。計測をやり直してください。"
@@ -338,6 +346,7 @@ final class ScanViewModel: ObservableObject {
                 }
 
                 try storage.savePoses(frames, sessionID: sessionID)
+                try storage.saveIMUSamples(imuSamples, sessionID: sessionID)
 
                 // RGB + 深度から色付き点群を生成して保存（メッシュの色情報の代替）
                 let points = PointCloudExporter.buildPointCloud(
@@ -377,6 +386,7 @@ final class ScanViewModel: ObservableObject {
                     self.isSaving = false
                     self.scanState = .idle
                     self.capturedRecords = []
+                    self.imuRecorder.resetRecording()
                     // 次のスキャンに備えて表示値もリセットする
                     self.frameCount = 0
                     self.missingDepthCount = 0
@@ -481,6 +491,10 @@ extension ScanViewModel: ARSessionManagerDelegate {
         // 取り直し前のフレームは別座標系になるため、状態に関わらず必ず破棄する
         // （通知はメインアクターへの非同期到達なので、その間に停止・保存へ遷移し得る）
         capturedRecords = []
+        imuRecorder.resetRecording()
+        if scanState == .scanning {
+            imuRecorder.beginRecording()
+        }
         frameCount = 0
         missingDepthCount = 0
         totalDistance = 0
@@ -502,6 +516,7 @@ extension ScanViewModel: ARSessionManagerDelegate {
         errorMessage = error.localizedDescription
         // セッション側でキャプチャが止められた場合は UI も一時停止状態に合わせる
         if scanState == .scanning {
+            imuRecorder.pauseRecording()
             stopTimer()
             scanState = .paused
         } else if scanState == .preparing {
